@@ -1,0 +1,12 @@
+# Godot 4 generated files
+.godot/
+.import/
+export.cfg
+export_presets.cfg
+
+# Build artifacts
+build/
+*.translation
+
+# macOS
+.DS_Store
