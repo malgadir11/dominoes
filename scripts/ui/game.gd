@@ -348,12 +348,12 @@ func _place_opener(move: Move) -> void:
 	var t := move.tile
 	if t.is_double():
 		_placed.append({"tile": t, "pos": Vector2(c.x - s * 0.5, c.y - s), "size": Vector2(s, 2.0 * s), "a": t.low, "b": t.low, "vertical": true})
-		_anchors[Board.Side.LEFT] = {"pos": Vector2(c.x - s * 0.5, c.y), "facing": Vector2(-1, 0), "vertical": true}
-		_anchors[Board.Side.RIGHT] = {"pos": Vector2(c.x + s * 0.5, c.y), "facing": Vector2(1, 0), "vertical": true}
+		_anchors[Board.Side.LEFT] = {"pos": Vector2(c.x - s * 0.5, c.y), "facing": Vector2(-1, 0), "vertical": true, "h_dir": Vector2(-1, 0)}
+		_anchors[Board.Side.RIGHT] = {"pos": Vector2(c.x + s * 0.5, c.y), "facing": Vector2(1, 0), "vertical": true, "h_dir": Vector2(1, 0)}
 	else:
 		_placed.append({"tile": t, "pos": Vector2(c.x - s, c.y - s * 0.5), "size": Vector2(2.0 * s, s), "a": t.low, "b": t.high, "vertical": false})
-		_anchors[Board.Side.LEFT] = {"pos": Vector2(c.x - s, c.y), "facing": Vector2(-1, 0), "vertical": false}
-		_anchors[Board.Side.RIGHT] = {"pos": Vector2(c.x + s, c.y), "facing": Vector2(1, 0), "vertical": false}
+		_anchors[Board.Side.LEFT] = {"pos": Vector2(c.x - s, c.y), "facing": Vector2(-1, 0), "vertical": false, "h_dir": Vector2(-1, 0)}
+		_anchors[Board.Side.RIGHT] = {"pos": Vector2(c.x + s, c.y), "facing": Vector2(1, 0), "vertical": false, "h_dir": Vector2(1, 0)}
 	_mark_played(t)
 	_round.apply_move(move)
 
@@ -365,17 +365,30 @@ func _place_directed(move: Move, dir: Vector2) -> void:
 	var end_val: int = _round.board.left_end if side == Board.Side.LEFT else _round.board.right_end
 	var geo := _tile_geometry(anchor["pos"], anchor["facing"], dir, end_val, move.tile.other_end(end_val), move.tile.is_double())
 	_placed.append({"tile": move.tile, "pos": geo["pos"], "size": geo["size"], "a": geo["a"], "b": geo["b"], "vertical": geo["vertical"]})
-	_anchors[side] = {"pos": geo["new_anchor"], "facing": geo["new_facing"], "vertical": geo["vertical"]}
+	# Remember the last horizontal travel direction so a turn can wrap back.
+	var new_h: Vector2 = dir if dir.y == 0.0 else anchor.get("h_dir", anchor["facing"])
+	_anchors[side] = {"pos": geo["new_anchor"], "facing": geo["new_facing"], "vertical": geo["vertical"], "h_dir": new_h}
 	_mark_played(move.tile)
 	_round.apply_move(move)
 
 
-# Allowed extend directions: the left end may go left or down, the right end may
-# go right or up — so the two ends curl away from each other and stay tidy.
-func _allowed_dirs(side: int) -> Array:
-	if side == Board.Side.RIGHT:
-		return [Vector2(1, 0), Vector2(0, -1)]  # right, up
-	return [Vector2(-1, 0), Vector2(0, 1)]  # left, down
+# Directions a tile may extend at an end. The end snakes: it runs horizontally,
+# turns into its corner (right end up, left end down) at the wall or by choice,
+# then wraps back the other way on a new row — so it never runs out of room.
+func _candidate_dirs(side: int, anchor: Dictionary, is_double: bool) -> Array:
+	var f: Vector2 = anchor["facing"]
+	if is_double:
+		return [f]  # doubles always continue straight (laid crosswise)
+	if f.y == 0.0:
+		# Facing horizontal: continue straight; also turn into the corner, but only
+		# off a horizontal tile (never off a vertical tile or a crosswise double).
+		var turn := Vector2(0, -1) if side == Board.Side.RIGHT else Vector2(0, 1)
+		if anchor.get("vertical", false):
+			return [f]
+		return [f, turn]
+	# Facing vertical (just turned): wrap to the opposite horizontal direction.
+	var h: Vector2 = anchor.get("h_dir", Vector2(1, 0) if side == Board.Side.RIGHT else Vector2(-1, 0))
+	return [-h]
 
 
 # Geometry of a tile attached at open-end edge-midpoint `m` (which faces `f`),
@@ -417,15 +430,10 @@ func _candidates_for(t: Tile) -> Array:
 		var end_val: int = _round.board.left_end if side == Board.Side.LEFT else _round.board.right_end
 		if not t.has_value(end_val):
 			continue
-		var m: Vector2 = _anchors[side]["pos"]
-		var f: Vector2 = _anchors[side]["facing"]
-		var prev_vertical: bool = _anchors[side].get("vertical", false)
-		for d in _allowed_dirs(side):
-			if t.is_double():
-				if d != f:
-					continue  # a double only continues straight (crosswise)
-			elif d.y != 0.0 and prev_vertical:
-				continue  # only turn vertical off a horizontal tile (no vertical-on-vertical)
+		var anchor: Dictionary = _anchors[side]
+		var m: Vector2 = anchor["pos"]
+		var f: Vector2 = anchor["facing"]
+		for d in _candidate_dirs(side, anchor, t.is_double()):
 			var geo := _tile_geometry(m, f, d, end_val, t.other_end(end_val), t.is_double())
 			if _in_bounds(geo["pos"], geo["size"]):
 				res.append({"side": side, "dir": d, "geo": geo})

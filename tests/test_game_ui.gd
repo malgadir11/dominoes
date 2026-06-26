@@ -69,5 +69,22 @@ func _initialize() -> void:
 		failed += 1
 		print("  FAIL  expected a vertical turn option off a horizontal end")
 
+	# Snake wrap: an end that just turned (faces vertical) must still offer a
+	# horizontal placement so it never gets stuck against the border.
+	scene.set("_anchors", {
+		Board.Side.RIGHT: {"pos": Vector2(500, 250), "facing": Vector2(0, -1), "vertical": true, "h_dir": Vector2(1, 0)},
+	})
+	var wrap_cands: Array = scene.call("_candidates_for", Tile.new(6, 3))
+	var has_horizontal := false
+	for c in wrap_cands:
+		if c["dir"].y == 0.0:
+			has_horizontal = true
+	if has_horizontal:
+		passed += 1
+		print("  PASS  a just-turned end offers a horizontal wrap (no border dead end)")
+	else:
+		failed += 1
+		print("  FAIL  just-turned end had no placement (would get stuck at the border)")
+
 	print("\nPassed: %d   Failed: %d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
