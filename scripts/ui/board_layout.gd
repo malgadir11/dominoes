@@ -19,7 +19,8 @@ static func compute(layout: Array, theme: TileTheme, max_width: float) -> Dictio
 	if layout.is_empty():
 		return {"placements": placements, "size": Vector2.ZERO}
 
-	var pitch := 1.5 * s  # vertical distance between runs; >s so crosswise doubles don't overlap
+	var gap := s * 0.16   # small space between tiles so the snake isn't cramped
+	var pitch := 2.0 * s  # vertical distance between runs (clean L-corners, no double overlap)
 	var dir := 1     # 1 = travelling right, -1 = travelling left
 	var px := 0.0    # x of the open connection point of the chain so far
 	var py := s      # y of the current run's center line
@@ -34,10 +35,10 @@ static func compute(layout: Array, theme: TileTheme, max_width: float) -> Dictio
 			first = false
 			if is_double:
 				placements.append(_p(entry, lv, rv, true, Vector2(px, py - s), Vector2(s, 2.0 * s)))
-				px += s
+				px += s + gap
 			else:
 				placements.append(_p(entry, lv, rv, false, Vector2(px, py - s * 0.5), Vector2(2.0 * s, s)))
-				px += 2.0 * s
+				px += 2.0 * s + gap
 			continue
 
 		# Turn the corner when the next horizontal tile would cross the bound.
@@ -54,14 +55,14 @@ static func compute(layout: Array, theme: TileTheme, max_width: float) -> Dictio
 			# Crosswise, centered on the line; advances by its short side.
 			var dx := 0.0 if dir == 1 else s
 			placements.append(_p(entry, lv, rv, true, Vector2(px - dx, py - s), Vector2(s, 2.0 * s)))
-			px += s * dir
+			px += (s + gap) * dir
 		elif dir == 1:
 			placements.append(_p(entry, lv, rv, false, Vector2(px, py - s * 0.5), Vector2(2.0 * s, s)))
-			px += 2.0 * s
+			px += 2.0 * s + gap
 		else:
 			# Travelling left: the connecting value faces right, so swap a/b.
 			placements.append(_p(entry, rv, lv, false, Vector2(px - 2.0 * s, py - s * 0.5), Vector2(2.0 * s, s)))
-			px -= 2.0 * s
+			px -= 2.0 * s + gap
 
 	return _normalized(placements)
 

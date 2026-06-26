@@ -14,6 +14,7 @@ const TARGET_SCORE := 75
 const HUMAN := 0
 const BOT := 1
 const BOT_DELAY := 0.55  # seconds, so the bot's moves are readable
+const FIELD_SIZE := Vector2(1100, 540)  # the bordered play field
 
 enum State { SETUP, PLAYER_TURN, BOT_TURN, ROUND_OVER, MATCH_OVER }
 
@@ -175,10 +176,25 @@ func _build_game_ui() -> void:
 	spacer_top.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	col.add_child(spacer_top)
 
-	# Board: a centered area we position tiles into absolutely, so the chain can
-	# snake within a flexible width instead of growing sideways forever.
+	# The play field: a bordered table the snake lives inside (and, once drag
+	# placement lands, can't be dragged out of). Centered, fixed size.
+	var field := PanelContainer.new()
+	var field_style := StyleBoxFlat.new()
+	field_style.bg_color = Color(0, 0, 0, 0.12)  # faint inset over the table
+	field_style.set_border_width_all(4)
+	field_style.border_color = Color.BLACK
+	field_style.set_corner_radius_all(10)
+	for side in ["left", "right", "top", "bottom"]:
+		field_style.set("content_margin_" + side, 18)
+	field.add_theme_stylebox_override("panel", field_style)
+	field.custom_minimum_size = FIELD_SIZE
+	field.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	field.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	col.add_child(field)
+	# Board area we position tiles into absolutely, centered inside the field.
 	var board_center := CenterContainer.new()
-	col.add_child(board_center)
+	board_center.clip_contents = true  # snake stays within the field border
+	field.add_child(board_center)
 	_board_area = Control.new()
 	board_center.add_child(_board_area)
 
@@ -567,9 +583,7 @@ func _on_board_end_clicked(_view: TileView, side: int) -> void:
 
 
 func _resolved_board_width() -> float:
-	var vp_w := get_viewport_rect().size.x
-	var available := (vp_w - 160.0) if vp_w > 0.0 else board_max_width
-	return clampf(minf(board_max_width, available), 320.0, 4000.0)
+	return FIELD_SIZE.x - 60.0  # keep the snake inside the field with a little padding
 
 
 func _tile_key(t: Tile) -> int:
