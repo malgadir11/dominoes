@@ -40,5 +40,34 @@ func _initialize() -> void:
 		failed += 1
 		print("  FAIL  expected 1 board tile, got %d" % rendered)
 
+	# No vertical-on-vertical: an end whose last tile is vertical (a turn tile or a
+	# crosswise double) must offer only horizontal placements; a horizontal end may
+	# also offer a vertical turn. (_round above has board ends [6, 6].)
+	scene.set("_anchors", {
+		Board.Side.RIGHT: {"pos": Vector2(500, 250), "facing": Vector2(1, 0), "vertical": true},
+		Board.Side.LEFT: {"pos": Vector2(150, 250), "facing": Vector2(-1, 0), "vertical": false},
+	})
+	var cands: Array = scene.call("_candidates_for", Tile.new(6, 3))
+	var right_has_vertical := false
+	var left_has_vertical := false
+	for c in cands:
+		if c["dir"].y != 0.0:
+			if c["side"] == Board.Side.RIGHT:
+				right_has_vertical = true
+			else:
+				left_has_vertical = true
+	if not right_has_vertical:
+		passed += 1
+		print("  PASS  no vertical placement off a vertical/double end")
+	else:
+		failed += 1
+		print("  FAIL  vertical placement was offered off a vertical end")
+	if left_has_vertical:
+		passed += 1
+		print("  PASS  vertical turn is allowed off a horizontal end")
+	else:
+		failed += 1
+		print("  FAIL  expected a vertical turn option off a horizontal end")
+
 	print("\nPassed: %d   Failed: %d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
