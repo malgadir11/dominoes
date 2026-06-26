@@ -18,7 +18,7 @@ func _initialize() -> void:
 	# auto-fired yet; build the UI explicitly for the test.
 	scene.call("_ready")
 
-	# A round with one tile already on the board.
+	# A round plus one player-placed tile transform.
 	var deck := Deck.new()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 1
@@ -27,6 +27,7 @@ func _initialize() -> void:
 	r.board.play(Tile.new(6, 6), Board.Side.LEFT)
 
 	scene.set("_round", r)
+	scene.set("_placed", [{"tile": Tile.new(6, 6), "pos": Vector2(10, 10), "size": Vector2(128, 64), "a": 6, "b": 6, "vertical": false}])
 	scene.set("_state", STATE_PLAYER_TURN)
 	scene.call("_render")
 
