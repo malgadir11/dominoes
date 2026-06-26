@@ -19,6 +19,10 @@ config/description="A premium block/draw dominoes game."
 run/main_scene="res://scenes/game.tscn"
 config/features=PackedStringArray("4.7")
 
+[debug]
+
+gdscript/warnings/untyped_declaration=1
+
 [display]
 
 window/size/viewport_width=1920
@@ -26,7 +30,3 @@ window/size/viewport_height=1080
 window/size/mode=2
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
-
-[debug]
-
-gdscript/warnings/untyped_declaration=1
