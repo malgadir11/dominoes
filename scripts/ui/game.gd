@@ -63,6 +63,12 @@ var _banner_label: Label
 
 func _ready() -> void:
 	randomize()
+	# Open maximized so the board has room — the editor keeps stripping window
+	# size from project.godot, so set it in code. Skipped under headless (tests).
+	if DisplayServer.get_name() != "headless":
+		var win := get_window()
+		win.min_size = Vector2i(900, 560)
+		win.mode = Window.MODE_MAXIMIZED
 	if tile_theme == null:
 		tile_theme = TileTheme.new()
 	_build_audio()

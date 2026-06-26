@@ -1,78 +1,89 @@
 class_name BoardLayout
 extends RefCounted
 
-## Turns the board's ordered tile sequence into screen placements that snake
-## (boustrophedon) within a flexible max width: rows fill left-to-right, then the
-## next row runs right-to-left under it, and so on — so the chain rings around
-## instead of growing forever sideways. Pure geometry, no nodes, so it is easy to
-## test and to retune (and it is player-count agnostic: 2, 3, 4 players and 2v2
-## all share one line of play, so this serves every mode).
+## Lays the played chain out as a real domino snake: tiles run horizontally,
+## and when a run reaches the width bound a tile is placed VERTICALLY as a corner
+## that turns the line down a row; the next run heads back the other way. Doubles
+## are drawn crosswise (vertical, centered on the line). This matches how physical
+## dominoes ring around a table. Pure geometry — no nodes — so it is testable and
+## player-count agnostic (one shared line serves 2-4 players and 2v2).
 ##
 ## Each placement is a Dictionary:
-##   {"tile": Tile, "a": int, "b": int, "vertical": bool, "size": Vector2, "pos": Vector2}
-## where (a, b) are the values to show in reading order (a then b). On right-to-
-## left rows the values are pre-swapped so equal numbers still physically touch.
-## Doubles are "vertical" (laid crosswise) and take half the width.
+##   {"tile": Tile, "a": int, "b": int, "vertical": bool, "pos": Vector2, "size": Vector2}
+## (a, b) are the values shown in reading order (left→right, or top→bottom for
+## vertical tiles); they are pre-oriented so equal numbers physically touch.
 
 static func compute(layout: Array, theme: TileTheme, max_width: float) -> Dictionary:
 	var s := theme.half_size
-	var pitch := 2.0 * s  # vertical distance between row centers (fits crosswise doubles)
-
-	# 1. Chunk the sequence into rows that fit within max_width.
-	var rows: Array = []
-	var cur: Array = []
-	var cur_w := 0.0
-	for entry in layout:
-		var w := _entry_width(entry, s)
-		if not cur.is_empty() and cur_w + w > max_width:
-			rows.append(cur)
-			cur = []
-			cur_w = 0.0
-		cur.append(entry)
-		cur_w += w
-	if not cur.is_empty():
-		rows.append(cur)
-
-	# 2. Position each row, alternating direction.
 	var placements: Array = []
-	var first_row_width := 0.0
-	for ri in range(rows.size()):
-		var row: Array = rows[ri]
-		var ltr := ri % 2 == 0
-		var y_center := s + ri * pitch
-		if ri == 0:
-			for entry in row:
-				first_row_width += _entry_width(entry, s)
-		if ltr:
-			var x := 0.0
-			for entry in row:
-				placements.append(_place(entry, x, y_center, s, false))
-				x += _entry_width(entry, s)
-		else:
-			# Right-to-left: anchor at the right edge so the turn lines up.
-			var x := max_width
-			for entry in row:
-				var w := _entry_width(entry, s)
-				x -= w
-				placements.append(_place(entry, x, y_center, s, true))
-
-	# A multi-row board uses the full width; a single row only as much as it needs.
-	var content_w: float = max_width if rows.size() > 1 else first_row_width
-	var height := rows.size() * pitch
 	if layout.is_empty():
-		content_w = 0.0
-		height = 0.0
-	return {"placements": placements, "size": Vector2(content_w, height)}
+		return {"placements": placements, "size": Vector2.ZERO}
+
+	var pitch := 1.5 * s  # vertical distance between runs; >s so crosswise doubles don't overlap
+	var dir := 1     # 1 = travelling right, -1 = travelling left
+	var px := 0.0    # x of the open connection point of the chain so far
+	var py := s      # y of the current run's center line
+	var first := true
+
+	for entry in layout:
+		var is_double: bool = entry["is_double"]
+		var lv: int = entry["left_val"]
+		var rv: int = entry["right_val"]
+
+		if first:
+			first = false
+			if is_double:
+				placements.append(_p(entry, lv, rv, true, Vector2(px, py - s), Vector2(s, 2.0 * s)))
+				px += s
+			else:
+				placements.append(_p(entry, lv, rv, false, Vector2(px, py - s * 0.5), Vector2(2.0 * s, s)))
+				px += 2.0 * s
+			continue
+
+		# Turn the corner when the next horizontal tile would cross the bound.
+		var turn := (dir == 1 and px + 2.0 * s > max_width) or (dir == -1 and px - 2.0 * s < 0.0)
+		if turn:
+			# A vertical tile bridging this run (top) to the next one (bottom).
+			var corner_x := px if dir == 1 else px - s
+			placements.append(_p(entry, lv, rv, true, Vector2(corner_x, py - s * 0.5), Vector2(s, 2.0 * s)))
+			py += pitch
+			dir = -dir
+			continue
+
+		if is_double:
+			# Crosswise, centered on the line; advances by its short side.
+			var dx := 0.0 if dir == 1 else s
+			placements.append(_p(entry, lv, rv, true, Vector2(px - dx, py - s), Vector2(s, 2.0 * s)))
+			px += s * dir
+		elif dir == 1:
+			placements.append(_p(entry, lv, rv, false, Vector2(px, py - s * 0.5), Vector2(2.0 * s, s)))
+			px += 2.0 * s
+		else:
+			# Travelling left: the connecting value faces right, so swap a/b.
+			placements.append(_p(entry, rv, lv, false, Vector2(px - 2.0 * s, py - s * 0.5), Vector2(2.0 * s, s)))
+			px -= 2.0 * s
+
+	return _normalized(placements)
 
 
-static func _entry_width(entry: Dictionary, s: float) -> float:
-	return s if entry["is_double"] else 2.0 * s
+static func _p(entry: Dictionary, a: int, b: int, vertical: bool, pos: Vector2, size: Vector2) -> Dictionary:
+	return {"tile": entry["tile"], "a": a, "b": b, "vertical": vertical, "pos": pos, "size": size}
 
 
-static func _place(entry: Dictionary, x: float, y_center: float, s: float, reversed: bool) -> Dictionary:
-	var is_double: bool = entry["is_double"]
-	var a: int = entry["right_val"] if reversed else entry["left_val"]
-	var b: int = entry["left_val"] if reversed else entry["right_val"]
-	var size := Vector2(s, s * 2.0) if is_double else Vector2(s * 2.0, s)
-	var top := y_center - (s if is_double else s * 0.5)
-	return {"tile": entry["tile"], "a": a, "b": b, "vertical": is_double, "size": size, "pos": Vector2(x, top)}
+# Shift everything so the top-left is (0, 0) and report the overall size.
+static func _normalized(placements: Array) -> Dictionary:
+	var min_x := INF
+	var min_y := INF
+	var max_x := -INF
+	var max_y := -INF
+	for pl in placements:
+		var p: Vector2 = pl["pos"]
+		var sz: Vector2 = pl["size"]
+		min_x = minf(min_x, p.x)
+		min_y = minf(min_y, p.y)
+		max_x = maxf(max_x, p.x + sz.x)
+		max_y = maxf(max_y, p.y + sz.y)
+	var shift := Vector2(-min_x, -min_y)
+	for pl in placements:
+		pl["pos"] = pl["pos"] + shift
+	return {"placements": placements, "size": Vector2(max_x - min_x, max_y - min_y)}
