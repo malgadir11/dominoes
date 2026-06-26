@@ -36,6 +36,13 @@ var _status_extra := ""
 var _selected_tile: Tile = null
 var _pending_moves: Array[Move] = []
 
+# Polish: the most recently played tile (highlighted + pop-animated once).
+var _last_played: Tile = null
+var _pop_pending := false
+
+# Placeholder sound effects (swappable filler in assets/audio/).
+var _sfx := {}
+
 # UI nodes (built in code).
 var _setup_root: Control
 var _difficulty_option: OptionButton
@@ -50,15 +57,35 @@ var _pass_button: Button
 var _next_button: Button
 var _left_end_button: Button
 var _right_end_button: Button
+var _banner: Control
+var _banner_label: Label
 
 
 func _ready() -> void:
 	randomize()
 	if tile_theme == null:
 		tile_theme = TileTheme.new()
+	_build_audio()
 	_build_setup_ui()
 	_build_game_ui()
 	_show_setup()
+
+
+# Load the placeholder sound effects, if present. Missing files are skipped so
+# the game still runs without audio. Replace the files in assets/audio/ to reskin.
+func _build_audio() -> void:
+	for sound_name in ["place", "draw", "win"]:
+		var path := "res://assets/audio/%s.wav" % sound_name
+		if ResourceLoader.exists(path):
+			var player := AudioStreamPlayer.new()
+			player.stream = load(path)
+			add_child(player)
+			_sfx[sound_name] = player
+
+
+func _play(sound_name: String) -> void:
+	if _sfx.has(sound_name):
+		_sfx[sound_name].play()
 
 
 # ---------------------------------------------------------------- setup screen
@@ -174,6 +201,27 @@ func _build_game_ui() -> void:
 	_next_button.pressed.connect(_on_next_pressed)
 	actions.add_child(_next_button)
 
+	# Win banner: a centered overlay shown on round/match end. Non-interactive so
+	# it never blocks the buttons underneath.
+	_banner = CenterContainer.new()
+	_banner.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_banner.visible = false
+	_game_root.add_child(_banner)
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_banner.add_child(panel)
+	var pad := MarginContainer.new()
+	for side in ["left", "right", "top", "bottom"]:
+		pad.add_theme_constant_override("margin_" + side, 28)
+	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(pad)
+	_banner_label = Label.new()
+	_banner_label.add_theme_font_size_override("font_size", 40)
+	_banner_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_banner_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pad.add_child(_banner_label)
+
 
 func _big_button(text: String) -> Button:
 	var b := Button.new()
@@ -218,10 +266,14 @@ func _start_round() -> void:
 	_round = Round.deal(2, 7, _variant, deck, _opener)
 	_status_extra = ""
 	_clear_selection()
+	_last_played = null
+	_pop_pending = false
 	# The first-round opening double is a forced, choiceless move — play it
 	# automatically so the board always starts with a tile in the center.
 	if _round.has_forced_opener():
-		_round.apply_move(_round.legal_moves()[0])
+		var opening := _round.legal_moves()[0]
+		_mark_played(opening.tile)
+		_round.apply_move(opening)
 	if _round.current == HUMAN:
 		_state = State.PLAYER_TURN
 		_render()
@@ -242,11 +294,14 @@ func _run_bot() -> void:
 		if moves.is_empty():
 			if _variant == Round.Variant.DRAW and not _round.boneyard_empty():
 				_round.draw_tile()
+				_play("draw")
 				_render()
 				continue
 			_round.pass_turn()
 		else:
-			_round.apply_move(_bot.choose_move(_round, BOT))
+			var bot_move := _bot.choose_move(_round, BOT)
+			_mark_played(bot_move.tile)
+			_round.apply_move(bot_move)
 		_render()
 	if _round.finished:
 		_finish_round()
@@ -286,6 +341,7 @@ func _on_zone_pressed(side: int) -> void:
 
 func _apply_player_move(move: Move) -> void:
 	_clear_selection()
+	_mark_played(move.tile)
 	_round.apply_move(move)
 	if _round.finished:
 		_finish_round()
@@ -293,9 +349,28 @@ func _apply_player_move(move: Move) -> void:
 		_run_bot()
 
 
+func _mark_played(tile: Tile) -> void:
+	_last_played = tile
+	_pop_pending = true
+	_play("place")
+
+
 func _clear_selection() -> void:
 	_selected_tile = null
 	_pending_moves = []
+
+
+func _show_banner(res: RoundResult) -> void:
+	var win := res.winner == HUMAN
+	var text := ""
+	if _state == State.MATCH_OVER:
+		text = "You win the match!" if win else "Bot wins the match"
+	else:
+		text = ("You won the round" if win else "Bot won the round") + "   +%d" % res.score
+	_banner_label.text = text
+	_banner.visible = true
+	_banner.modulate.a = 0.0
+	create_tween().tween_property(_banner, "modulate:a", 1.0, 0.25)
 
 
 func _moves_for(t: Tile) -> Array[Move]:
@@ -311,6 +386,7 @@ func _on_draw_pressed() -> void:
 		return
 	_clear_selection()
 	_round.draw_tile()
+	_play("draw")
 	_render()
 
 
@@ -337,6 +413,8 @@ func _finish_round() -> void:
 	else:
 		_state = State.ROUND_OVER
 		_opener = res.winner
+	_play("win")
+	_show_banner(res)
 	_render()
 
 
@@ -377,7 +455,14 @@ func _render() -> void:
 			pick_side = Board.Side.LEFT
 		elif choosing and is_right_end and _has_pending_side(Board.Side.RIGHT):
 			pick_side = Board.Side.RIGHT
-		_board_area.add_child(_make_board_view(placements[i], pick_side))
+		var view := _make_board_view(placements[i], pick_side)
+		_board_area.add_child(view)
+		# Highlight the most recently played tile; pop it once when freshly placed.
+		if _last_played != null and view.tile_ref.equals(_last_played):
+			view.set_recent(true)
+			if _pop_pending:
+				view.pop_in()
+	_pop_pending = false
 
 	# Player hand: playable tiles highlighted, the selected one too.
 	_clear(_player_hand_box)
@@ -390,8 +475,11 @@ func _render() -> void:
 	var stuck: bool = _state == State.PLAYER_TURN and legal.is_empty()
 	_draw_button.visible = stuck and _variant == Round.Variant.DRAW and not _round.boneyard_empty()
 	_pass_button.visible = stuck and not _draw_button.visible
-	_next_button.visible = _state == State.ROUND_OVER or _state == State.MATCH_OVER
+	var over: bool = _state == State.ROUND_OVER or _state == State.MATCH_OVER
+	_next_button.visible = over
 	_next_button.text = "New match" if _state == State.MATCH_OVER else "Next round"
+	if not over:
+		_banner.visible = false
 
 	# Route-choice buttons (in addition to clicking the lit end tile on the board).
 	_left_end_button.visible = choosing and _has_pending_side(Board.Side.LEFT)

@@ -29,6 +29,7 @@ extends Resource
 @export var back_color: Color = Color("3a6ea5")     ## face-down tile back
 @export var table_color: Color = Color("23433a")    ## play surface
 @export var highlight_color: Color = Color("4caf7d") ## a playable / selected tile
+@export var recent_color: Color = Color("e0a23b")    ## the most recently played tile
 @export var text_color: Color = Color("f4f4f2")
 
 @export_group("Optional artwork (overrides the procedural placeholders)")

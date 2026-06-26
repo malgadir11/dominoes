@@ -19,6 +19,7 @@ var vertical: bool = false
 var face_up: bool = true
 var interactive: bool = false
 var highlighted: bool = false
+var recent: bool = false  ## the most recently played tile (distinct border)
 var theme_data: TileTheme
 
 
@@ -33,14 +34,42 @@ func configure(td: TileTheme, t: Tile, a: int, b: int, p_vertical: bool, p_face_
 	face_up = p_face_up
 	interactive = p_interactive
 	var s := td.half_size
-	custom_minimum_size = Vector2(s, s * 2.0) if vertical else Vector2(s * 2.0, s)
+	var full := Vector2(s, s * 2.0) if vertical else Vector2(s * 2.0, s)
+	custom_minimum_size = full
+	pivot_offset = full * 0.5  # scale/animate from the center
 	mouse_filter = Control.MOUSE_FILTER_STOP if interactive else Control.MOUSE_FILTER_IGNORE
+	if interactive:
+		if not mouse_entered.is_connected(_on_hover):
+			mouse_entered.connect(_on_hover)
+			mouse_exited.connect(_on_unhover)
 	queue_redraw()
 
 
 func set_highlighted(h: bool) -> void:
 	highlighted = h
 	queue_redraw()
+
+
+func set_recent(r: bool) -> void:
+	recent = r
+	queue_redraw()
+
+
+## Animate the tile popping into place (called for a freshly played tile).
+func pop_in() -> void:
+	scale = Vector2(0.7, 0.7)
+	modulate.a = 0.0
+	var tw := create_tween().set_parallel(true)
+	tw.tween_property(self, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(self, "modulate:a", 1.0, 0.14)
+
+
+func _on_hover() -> void:
+	create_tween().tween_property(self, "scale", Vector2(1.08, 1.08), 0.08)
+
+
+func _on_unhover() -> void:
+	create_tween().tween_property(self, "scale", Vector2.ONE, 0.08)
 
 
 func _gui_input(event: InputEvent) -> void:
@@ -65,8 +94,13 @@ func _draw() -> void:
 		var sb := StyleBoxFlat.new()
 		sb.bg_color = td.body_color if face_up else td.back_color
 		sb.set_corner_radius_all(int(td.corner_radius))
-		sb.set_border_width_all(int(td.border_width))
-		sb.border_color = td.highlight_color if highlighted else td.border_color
+		var border := td.border_color
+		if highlighted:
+			border = td.highlight_color
+		elif recent:
+			border = td.recent_color
+		sb.set_border_width_all(int(td.border_width) + (1 if (highlighted or recent) else 0))
+		sb.border_color = border
 		draw_style_box(sb, rect)
 
 	if not face_up:
