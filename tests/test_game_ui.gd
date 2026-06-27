@@ -43,7 +43,7 @@ func _initialize() -> void:
 	var anchor := {"pos": Vector2(cen.x + bs, cen.y), "facing": Vector2(1, 0), "vertical": false, "h_dir": Vector2(1, 0)}
 	var placed := 1  # the opener
 	for i in range(27):
-		var d: Vector2 = scene.call("_layout_dir", anchor, false)
+		var d: Vector2 = scene.call("_layout_dir", anchor, false, Vector2(0, -1))  # right side wraps up
 		var geo: Dictionary = scene.call("_tile_geometry", anchor["pos"], anchor["facing"], d, 0, 0, false)
 		if not scene.call("_in_bounds", geo["pos"], geo["size"], d):
 			break  # no in-bounds room left

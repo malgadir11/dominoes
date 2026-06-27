@@ -29,6 +29,7 @@ var _status_extra := ""
 # The board layout is recomputed from the played sequence every turn (see
 # _relayout). Each entry: {"tile", "pos", "size", "a", "b", "vertical"}.
 var _placed: Array = []
+var _opener_tile: Tile = null  # the spinner; the chain splits here (left↓, right↑)
 
 # Route selection: when a clicked tile can go on either end, the player clicks an
 # end of the board to choose. Null when nothing is mid-selection.
@@ -285,9 +286,11 @@ func _start_round() -> void:
 	_placed = []
 	_last_played = null
 	_pop_pending = false
+	_opener_tile = null
 	# The first-round opening double is a forced, choiceless move — play it.
 	if _round.has_forced_opener():
 		var op := _round.legal_moves()[0]
+		_opener_tile = op.tile
 		_mark_played(op.tile)
 		_round.apply_move(op)
 	if _round.current == HUMAN:
@@ -316,6 +319,8 @@ func _run_bot() -> void:
 			_round.pass_turn()
 		else:
 			var bot_move := _bot.choose_move(_round, BOT)
+			if _round.board.is_empty():
+				_opener_tile = bot_move.tile
 			_mark_played(bot_move.tile)
 			_round.apply_move(bot_move)
 		_render()
@@ -369,6 +374,8 @@ func _on_end_clicked(_view: TileView, side: int) -> void:
 
 func _apply_player_move(move: Move) -> void:
 	_clear_selection()
+	if _round.board.is_empty():
+		_opener_tile = move.tile
 	_mark_played(move.tile)
 	_round.apply_move(move)
 	_after_player_move()
@@ -440,26 +447,50 @@ func _relayout() -> void:
 	if layout.is_empty():
 		return
 	var s := tile_theme.half_size
-	var e0: Dictionary = layout[0]
-	var anchor: Dictionary
-	if e0["is_double"]:
-		_placed.append({"tile": e0["tile"], "pos": Vector2(s, s), "size": Vector2(s, 2.0 * s), "a": e0["left_val"], "b": e0["left_val"], "vertical": true})
-		anchor = {"pos": Vector2(2.0 * s, 2.0 * s), "facing": Vector2(1, 0), "vertical": true, "h_dir": Vector2(1, 0)}
+	var c := _field_inner() * 0.5
+	var oi := _opener_index(layout)
+	var eo: Dictionary = layout[oi]
+	var left_anchor: Dictionary
+	var right_anchor: Dictionary
+	if eo["is_double"]:
+		_placed.append({"tile": eo["tile"], "pos": Vector2(c.x - s * 0.5, c.y - s), "size": Vector2(s, 2.0 * s), "a": eo["left_val"], "b": eo["left_val"], "vertical": true})
+		left_anchor = {"pos": Vector2(c.x - s * 0.5, c.y), "facing": Vector2(-1, 0), "vertical": true, "h_dir": Vector2(-1, 0)}
+		right_anchor = {"pos": Vector2(c.x + s * 0.5, c.y), "facing": Vector2(1, 0), "vertical": true, "h_dir": Vector2(1, 0)}
 	else:
-		_placed.append({"tile": e0["tile"], "pos": Vector2(s, 1.5 * s), "size": Vector2(2.0 * s, s), "a": e0["left_val"], "b": e0["right_val"], "vertical": false})
-		anchor = {"pos": Vector2(3.0 * s, 2.0 * s), "facing": Vector2(1, 0), "vertical": false, "h_dir": Vector2(1, 0)}
-	for i in range(1, layout.size()):
-		var entry: Dictionary = layout[i]
-		var d := _layout_dir(anchor, entry["is_double"])
-		var geo := _tile_geometry(anchor["pos"], anchor["facing"], d, entry["left_val"], entry["right_val"], entry["is_double"])
-		_placed.append({"tile": entry["tile"], "pos": geo["pos"], "size": geo["size"], "a": geo["a"], "b": geo["b"], "vertical": geo["vertical"]})
-		var new_h: Vector2 = d if d.y == 0.0 else anchor.get("h_dir", anchor["facing"])
-		anchor = {"pos": geo["new_anchor"], "facing": geo["new_facing"], "vertical": geo["vertical"], "h_dir": new_h}
+		_placed.append({"tile": eo["tile"], "pos": Vector2(c.x - s, c.y - s * 0.5), "size": Vector2(2.0 * s, s), "a": eo["left_val"], "b": eo["right_val"], "vertical": false})
+		left_anchor = {"pos": Vector2(c.x - s, c.y), "facing": Vector2(-1, 0), "vertical": false, "h_dir": Vector2(-1, 0)}
+		right_anchor = {"pos": Vector2(c.x + s, c.y), "facing": Vector2(1, 0), "vertical": false, "h_dir": Vector2(1, 0)}
+	# Right of the opener wraps UPWARD; the connecting value is each tile's left.
+	var anchor := right_anchor
+	for i in range(oi + 1, layout.size()):
+		anchor = _place_walk(layout[i], anchor, Vector2(0, -1), layout[i]["left_val"], layout[i]["right_val"])
+	# Left of the opener wraps DOWNWARD; walking left, it connects on its right.
+	anchor = left_anchor
+	for i in range(oi - 1, -1, -1):
+		anchor = _place_walk(layout[i], anchor, Vector2(0, 1), layout[i]["right_val"], layout[i]["left_val"])
+
+
+# Place one tile of the walk and return the new anchor.
+func _place_walk(entry: Dictionary, anchor: Dictionary, turn_dir: Vector2, connecting: int, exposed: int) -> Dictionary:
+	var d := _layout_dir(anchor, entry["is_double"], turn_dir)
+	var geo := _tile_geometry(anchor["pos"], anchor["facing"], d, connecting, exposed, entry["is_double"])
+	_placed.append({"tile": entry["tile"], "pos": geo["pos"], "size": geo["size"], "a": geo["a"], "b": geo["b"], "vertical": geo["vertical"]})
+	var new_h: Vector2 = d if d.y == 0.0 else anchor.get("h_dir", anchor["facing"])
+	return {"pos": geo["new_anchor"], "facing": geo["new_facing"], "vertical": geo["vertical"], "h_dir": new_h}
+
+
+# Where the opener (spinner) sits in the played sequence — the chain splits here.
+func _opener_index(layout: Array) -> int:
+	if _opener_tile != null:
+		for i in range(layout.size()):
+			if layout[i]["tile"].equals(_opener_tile):
+				return i
+	return 0
 
 
 # Direction for the next tile in the auto-layout walk: continue straight if it
-# fits, otherwise turn into a new row; wrap when coming off a turn.
-func _layout_dir(anchor: Dictionary, is_double: bool) -> Vector2:
+# fits, otherwise turn (toward turn_dir) into a new row; wrap when off a turn.
+func _layout_dir(anchor: Dictionary, is_double: bool, turn_dir: Vector2) -> Vector2:
 	var f: Vector2 = anchor["facing"]
 	if is_double:
 		return f
@@ -468,7 +499,7 @@ func _layout_dir(anchor: Dictionary, is_double: bool) -> Vector2:
 		if anchor.get("vertical", false):
 			dirs = [f]  # off a crosswise double, only continue straight
 		else:
-			dirs = [f, Vector2(0, 1), Vector2(0, -1)]  # straight, then turn down, then up
+			dirs = [f, turn_dir, -turn_dir]  # straight, preferred turn, then fallback
 	else:
 		var h: Vector2 = anchor.get("h_dir", Vector2(1, 0))
 		dirs = [-h, h]  # wrap back the other way, or keep going
