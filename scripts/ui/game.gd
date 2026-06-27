@@ -26,20 +26,14 @@ var _scores := [0, 0]
 var _opener := -1
 var _status_extra := ""
 
-# Player-placed board: each entry is the visual transform of a played tile,
-#   {"tile": Tile, "pos": Vector2, "size": Vector2, "a": int, "b": int, "vertical": bool}
-# and the two open ends are anchors the player drags new tiles onto.
+# The board layout is recomputed from the played sequence every turn (see
+# _relayout). Each entry: {"tile", "pos", "size", "a", "b", "vertical"}.
 var _placed: Array = []
-var _anchors := {}  # {Board.Side: {"pos": Vector2, "facing": Vector2}}
 
-# Click-to-place ("pick up") state: click a tile to hold it (it follows the
-# cursor), then click a glowing spot to lock it there.
-var _held_tile: Tile = null
-var _held_candidates: Array = []  # [{"side": int, "dir": Vector2, "geo": Dictionary}]
-var _held_index := -1
-var _held_layer: Control = null
-var _held_ghosts: Array = []
-var _cursor_ghost: TileView = null
+# Route selection: when a clicked tile can go on either end, the player clicks an
+# end of the board to choose. Null when nothing is mid-selection.
+var _selected_tile: Tile = null
+var _pending_moves: Array[Move] = []
 
 # Polish: the most recently played tile (highlighted + pop-animated once).
 var _last_played: Tile = null
@@ -287,15 +281,15 @@ func _start_round() -> void:
 	deck.shuffle_deck()
 	_round = Round.deal(2, 7, _variant, deck, _opener)
 	_status_extra = ""
-	_cancel_held()
+	_clear_selection()
 	_placed = []
-	_anchors = {}
 	_last_played = null
 	_pop_pending = false
-	# The first-round opening double is a forced, choiceless move — play it
-	# automatically so the board always starts with a tile in the center.
+	# The first-round opening double is a forced, choiceless move — play it.
 	if _round.has_forced_opener():
-		_place_opener(_round.legal_moves()[0])
+		var op := _round.legal_moves()[0]
+		_mark_played(op.tile)
+		_round.apply_move(op)
 	if _round.current == HUMAN:
 		_state = State.PLAYER_TURN
 		_render()
@@ -308,17 +302,12 @@ func _start_round() -> void:
 func _run_bot() -> void:
 	_state = State.BOT_TURN
 	_status_extra = ""
-	_cancel_held()
+	_clear_selection()
 	_render()
 	while not _round.finished and _round.current == BOT:
 		await get_tree().create_timer(BOT_DELAY).timeout
 		var moves := _round.legal_moves()
-		var placeable: Array[Move] = []
-		for m in moves:
-			if _round.board.is_empty() or _move_placeable(m):
-				placeable.append(m)
-		if placeable.is_empty():
-			# Nothing fits in bounds (no legal move, or the field is full here).
+		if moves.is_empty():
 			if _variant == Round.Variant.DRAW and not _round.boneyard_empty():
 				_round.draw_tile()
 				_play("draw")
@@ -327,12 +316,8 @@ func _run_bot() -> void:
 			_round.pass_turn()
 		else:
 			var bot_move := _bot.choose_move(_round, BOT)
-			if not (_round.board.is_empty() or _move_placeable(bot_move)):
-				bot_move = placeable[0]  # the AI's pick doesn't fit; use one that does
-			if _round.board.is_empty():
-				_place_opener(bot_move)
-			else:
-				_place_directed(bot_move, _auto_dir(bot_move))
+			_mark_played(bot_move.tile)
+			_round.apply_move(bot_move)
 		_render()
 	if _round.finished:
 		_finish_round()
@@ -353,54 +338,52 @@ func _field_inner() -> Vector2:
 	return FIELD_SIZE - Vector2(36, 36)  # minus the panel's content margins (18 each side)
 
 
-# The first tile goes in the center and seeds both open-end anchors.
-func _place_opener(move: Move) -> void:
-	var s := tile_theme.half_size
-	var c := _field_inner() * 0.5
-	var t := move.tile
-	if t.is_double():
-		_placed.append({"tile": t, "pos": Vector2(c.x - s * 0.5, c.y - s), "size": Vector2(s, 2.0 * s), "a": t.low, "b": t.low, "vertical": true})
-		_anchors[Board.Side.LEFT] = {"pos": Vector2(c.x - s * 0.5, c.y), "facing": Vector2(-1, 0), "vertical": true, "h_dir": Vector2(-1, 0)}
-		_anchors[Board.Side.RIGHT] = {"pos": Vector2(c.x + s * 0.5, c.y), "facing": Vector2(1, 0), "vertical": true, "h_dir": Vector2(1, 0)}
+# ---------------------------------------------------------------- player input
+
+func _on_hand_pressed(view: TileView) -> void:
+	if _state != State.PLAYER_TURN:
+		return
+	# Clicking the already-selected tile cancels.
+	if _selected_tile != null and view.tile_ref.equals(_selected_tile):
+		_clear_selection()
+		_render()
+		return
+	var moves := _moves_for(view.tile_ref)
+	if moves.is_empty():
+		return  # not playable
+	if moves.size() == 1:
+		_apply_player_move(moves[0])  # only one end -> play it
 	else:
-		_placed.append({"tile": t, "pos": Vector2(c.x - s, c.y - s * 0.5), "size": Vector2(2.0 * s, s), "a": t.low, "b": t.high, "vertical": false})
-		_anchors[Board.Side.LEFT] = {"pos": Vector2(c.x - s, c.y), "facing": Vector2(-1, 0), "vertical": false, "h_dir": Vector2(-1, 0)}
-		_anchors[Board.Side.RIGHT] = {"pos": Vector2(c.x + s, c.y), "facing": Vector2(1, 0), "vertical": false, "h_dir": Vector2(1, 0)}
-	_mark_played(t)
-	_round.apply_move(move)
+		# Plays on either end — light up both ends and let the player pick one.
+		_selected_tile = view.tile_ref
+		_pending_moves = moves
+		_render()
 
 
-# Place a tile on one end, extending in a chosen direction.
-func _place_directed(move: Move, dir: Vector2) -> void:
-	var side := move.side
-	var anchor: Dictionary = _anchors[side]
-	var end_val: int = _round.board.left_end if side == Board.Side.LEFT else _round.board.right_end
-	var geo := _tile_geometry(anchor["pos"], anchor["facing"], dir, end_val, move.tile.other_end(end_val), move.tile.is_double())
-	_placed.append({"tile": move.tile, "pos": geo["pos"], "size": geo["size"], "a": geo["a"], "b": geo["b"], "vertical": geo["vertical"]})
-	# Remember the last horizontal travel direction so a turn can wrap back.
-	var new_h: Vector2 = dir if dir.y == 0.0 else anchor.get("h_dir", anchor["facing"])
-	_anchors[side] = {"pos": geo["new_anchor"], "facing": geo["new_facing"], "vertical": geo["vertical"], "h_dir": new_h}
+func _on_end_clicked(_view: TileView, side: int) -> void:
+	for m in _pending_moves:
+		if m.side == side:
+			_apply_player_move(m)
+			return
+
+
+func _apply_player_move(move: Move) -> void:
+	_clear_selection()
 	_mark_played(move.tile)
 	_round.apply_move(move)
+	_after_player_move()
 
 
-# Directions a tile may extend at an end. The end snakes: it runs horizontally,
-# turns into its corner (right end up, left end down) at the wall or by choice,
-# then wraps back the other way on a new row — so it never runs out of room.
-func _candidate_dirs(side: int, anchor: Dictionary, is_double: bool) -> Array:
-	var f: Vector2 = anchor["facing"]
-	if is_double:
-		return [f]  # doubles always continue straight (laid crosswise)
-	if f.y == 0.0:
-		# Facing horizontal: continue straight; also turn into the corner, but only
-		# off a horizontal tile (never off a vertical tile or a crosswise double).
-		var turn := Vector2(0, -1) if side == Board.Side.RIGHT else Vector2(0, 1)
-		if anchor.get("vertical", false):
-			return [f]
-		return [f, turn]
-	# Facing vertical (just turned): wrap to the opposite horizontal direction.
-	var h: Vector2 = anchor.get("h_dir", Vector2(1, 0) if side == Board.Side.RIGHT else Vector2(-1, 0))
-	return [-h]
+func _clear_selection() -> void:
+	_selected_tile = null
+	_pending_moves = []
+
+
+func _has_pending(side: int) -> bool:
+	for m in _pending_moves:
+		if m.side == side:
+			return true
+	return false
 
 
 # Geometry of a tile attached at open-end edge-midpoint `m` (which faces `f`),
@@ -440,181 +423,60 @@ func _in_bounds(pos: Vector2, size: Vector2, reserve: Vector2 = Vector2.ZERO) ->
 	elif reserve.x < 0.0:
 		p.x -= s
 		sz.x += s
+	if reserve.y > 0.0:
+		sz.y += s
+	elif reserve.y < 0.0:
+		p.y -= s
+		sz.y += s
 	return p.x >= -0.5 and p.y >= -0.5 and p.x + sz.x <= inner.x + 0.5 and p.y + sz.y <= inner.y + 0.5
 
 
-# Every in-bounds way to play `t`: each matching end, in its allowed directions.
-func _candidates_for(t: Tile) -> Array:
-	var res: Array = []
-	for side in [Board.Side.LEFT, Board.Side.RIGHT]:
-		if not _anchors.has(side):
-			continue
-		var end_val: int = _round.board.left_end if side == Board.Side.LEFT else _round.board.right_end
-		if not t.has_value(end_val):
-			continue
-		var anchor: Dictionary = _anchors[side]
-		var m: Vector2 = anchor["pos"]
-		var f: Vector2 = anchor["facing"]
-		for d in _candidate_dirs(side, anchor, t.is_double()):
-			var geo := _tile_geometry(m, f, d, end_val, t.other_end(end_val), t.is_double())
-			var reserve: Vector2 = d if d.y == 0.0 else Vector2.ZERO
-			if _in_bounds(geo["pos"], geo["size"], reserve):
-				res.append({"side": side, "dir": d, "geo": geo})
-	return res
-
-
-# The bot doesn't pick — take the first in-bounds direction (prefers straight).
-func _auto_dir(move: Move) -> Vector2:
-	for c in _candidates_for(move.tile):
-		if c["side"] == move.side:
-			return c["dir"]
-	return _anchors[move.side]["facing"]
-
-
-func _move_for_side(t: Tile, side: int) -> Move:
-	for m in _round.legal_moves():
-		if m.tile.equals(t) and m.side == side:
-			return m
-	return null
-
-
-# A move is placeable only if it has an in-bounds spot — so nothing is ever put
-# outside the field, by the player or the bot.
-func _move_placeable(m: Move) -> bool:
-	for c in _candidates_for(m.tile):
-		if c["side"] == m.side:
-			return true
-	return false
-
-
-func _tile_playable(t: Tile) -> bool:
-	if _round.board.is_empty():
-		return true  # any tile can lead; the opener goes at the center, always in bounds
-	return not _candidates_for(t).is_empty()
-
-
-func _player_has_placeable() -> bool:
-	for t in _round.hands[HUMAN].tiles:
-		if _tile_playable(t):
-			return true
-	return false
-
-
-# ---------------------------------------------------------------- click to place
-
-func _on_hand_pressed(view: TileView) -> void:
-	if _state != State.PLAYER_TURN or _held_tile != null:
+# Rebuild the whole board layout from the played sequence as a clean serpentine
+# that always fits — recomputed every turn, so an end can never trap itself and
+# tiles are always laid end-to-end (never crammed side-by-side).
+func _relayout() -> void:
+	_placed = []
+	var layout: Array = _round.board.layout
+	if layout.is_empty():
 		return
-	if _round.board.is_empty():
-		# The opening tile has only one spot (center) — just place it.
-		var moves := _moves_for(view.tile_ref)
-		if not moves.is_empty():
-			_place_opener(moves[0])
-			_after_player_move()
-		return
-	if _moves_for(view.tile_ref).is_empty():
-		return  # not playable
-	_pick_up(view.tile_ref)
-
-
-func _pick_up(t: Tile) -> void:
-	_held_candidates = _candidates_for(t)
-	if _held_candidates.is_empty():
-		return  # no in-bounds spot to place it
-	if _fit_tween != null and _fit_tween.is_valid():
-		_fit_tween.kill()  # freeze the board so drag coordinates stay stable
-	_held_tile = t
-	_held_index = -1
-	_build_held_layer()
-	_update_held()
-
-
-func _build_held_layer() -> void:
 	var s := tile_theme.half_size
-	_held_layer = Control.new()
-	_held_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_board_content.add_child(_held_layer)  # shares the board's auto-fit scale
-	_held_ghosts = []
-	for c in _held_candidates:
-		var geo: Dictionary = c["geo"]
-		var g := TileView.new()
-		g.configure(tile_theme, _held_tile, geo["a"], geo["b"], geo["vertical"], true, false)
-		g.position = geo["pos"]
-		g.size = geo["size"]
-		g.modulate.a = 0.25
-		_held_layer.add_child(g)
-		_held_ghosts.append(g)
-	# A translucent tile that follows the cursor.
-	_cursor_ghost = TileView.new()
-	_cursor_ghost.configure(tile_theme, _held_tile, _held_tile.low, _held_tile.high, false, false, false)
-	_cursor_ghost.size = Vector2(2.0 * s, s)
-	_cursor_ghost.modulate.a = 0.55
-	_held_layer.add_child(_cursor_ghost)
-
-
-func _input(event: InputEvent) -> void:
-	if _held_tile == null:
-		return
-	if event is InputEventMouseMotion:
-		_update_held()
-	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		_try_place()
-		get_viewport().set_input_as_handled()
-	elif event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
-		_cancel_held()
-		_render()
-
-
-func _update_held() -> void:
-	var s := tile_theme.half_size
-	# Candidate positions are in board-content (layout) coords; the field rect is
-	# in board-area coords. Use each for its own check so the auto-fit scale works.
-	var content_mouse := _board_content.get_local_mouse_position()
-	if _cursor_ghost != null:
-		_cursor_ghost.position = content_mouse - Vector2(s, s * 0.5)
-	var inside := Rect2(Vector2.ZERO, _field_inner()).has_point(_board_area.get_local_mouse_position())
-	var best := -1
-	if inside:
-		var best_d := INF
-		for i in range(_held_candidates.size()):
-			var geo: Dictionary = _held_candidates[i]["geo"]
-			var center: Vector2 = geo["pos"] + geo["size"] * 0.5
-			var dist := content_mouse.distance_to(center)
-			if dist < best_d:
-				best_d = dist
-				best = i
-	_held_index = best
-	for i in range(_held_ghosts.size()):
-		_held_ghosts[i].modulate.a = 0.85 if i == best else 0.2
-
-
-func _try_place() -> void:
-	var mouse := _board_area.get_local_mouse_position()
-	var inside := Rect2(Vector2.ZERO, _field_inner()).has_point(mouse)
-	if not inside or _held_index < 0:
-		_cancel_held()  # clicked off the field -> drop it back to hand
-		_render()
-		return
-	var c: Dictionary = _held_candidates[_held_index]
-	var t := _held_tile
-	_cancel_held()
-	var move := _move_for_side(t, c["side"])
-	if move != null:
-		_place_directed(move, c["dir"])
-		_after_player_move()
+	var e0: Dictionary = layout[0]
+	var anchor: Dictionary
+	if e0["is_double"]:
+		_placed.append({"tile": e0["tile"], "pos": Vector2(s, s), "size": Vector2(s, 2.0 * s), "a": e0["left_val"], "b": e0["left_val"], "vertical": true})
+		anchor = {"pos": Vector2(2.0 * s, 2.0 * s), "facing": Vector2(1, 0), "vertical": true, "h_dir": Vector2(1, 0)}
 	else:
-		_render()
+		_placed.append({"tile": e0["tile"], "pos": Vector2(s, 1.5 * s), "size": Vector2(2.0 * s, s), "a": e0["left_val"], "b": e0["right_val"], "vertical": false})
+		anchor = {"pos": Vector2(3.0 * s, 2.0 * s), "facing": Vector2(1, 0), "vertical": false, "h_dir": Vector2(1, 0)}
+	for i in range(1, layout.size()):
+		var entry: Dictionary = layout[i]
+		var d := _layout_dir(anchor, entry["is_double"])
+		var geo := _tile_geometry(anchor["pos"], anchor["facing"], d, entry["left_val"], entry["right_val"], entry["is_double"])
+		_placed.append({"tile": entry["tile"], "pos": geo["pos"], "size": geo["size"], "a": geo["a"], "b": geo["b"], "vertical": geo["vertical"]})
+		var new_h: Vector2 = d if d.y == 0.0 else anchor.get("h_dir", anchor["facing"])
+		anchor = {"pos": geo["new_anchor"], "facing": geo["new_facing"], "vertical": geo["vertical"], "h_dir": new_h}
 
 
-func _cancel_held() -> void:
-	_held_tile = null
-	_held_candidates = []
-	_held_index = -1
-	_cursor_ghost = null
-	if _held_layer != null:
-		_held_layer.queue_free()
-		_held_layer = null
-	_held_ghosts = []
+# Direction for the next tile in the auto-layout walk: continue straight if it
+# fits, otherwise turn into a new row; wrap when coming off a turn.
+func _layout_dir(anchor: Dictionary, is_double: bool) -> Vector2:
+	var f: Vector2 = anchor["facing"]
+	if is_double:
+		return f
+	var dirs: Array
+	if f.y == 0.0:
+		if anchor.get("vertical", false):
+			dirs = [f]  # off a crosswise double, only continue straight
+		else:
+			dirs = [f, Vector2(0, 1), Vector2(0, -1)]  # straight, then turn down, then up
+	else:
+		var h: Vector2 = anchor.get("h_dir", Vector2(1, 0))
+		dirs = [-h, h]  # wrap back the other way, or keep going
+	for d in dirs:
+		var geo := _tile_geometry(anchor["pos"], f, d, 0, 0, false)
+		if _in_bounds(geo["pos"], geo["size"], d):
+			return d
+	return dirs[0]
 
 
 func _after_player_move() -> void:
@@ -683,7 +545,7 @@ func _moves_for(t: Tile) -> Array[Move]:
 func _on_draw_pressed() -> void:
 	if _state != State.PLAYER_TURN:
 		return
-	_cancel_held()
+	_clear_selection()
 	_round.draw_tile()
 	_play("draw")
 	_render()
@@ -692,7 +554,7 @@ func _on_draw_pressed() -> void:
 func _on_pass_pressed() -> void:
 	if _state != State.PLAYER_TURN:
 		return
-	_cancel_held()
+	_clear_selection()
 	_round.pass_turn()
 	if _round.finished:
 		_finish_round()
@@ -729,26 +591,36 @@ func _on_next_pressed() -> void:
 func _render() -> void:
 	_status_label.text = _status_text()
 
-	# A hand tile is highlighted only if it has an in-bounds spot to go.
+	# A hand tile is highlighted if it has a legal move (the auto-layout always fits).
 	var playable := {}
 	if _state == State.PLAYER_TURN and _round.current == HUMAN:
-		for t in _round.hands[HUMAN].tiles:
-			if _tile_playable(t):
-				playable[_tile_key(t)] = true
+		for m in _round.legal_moves():
+			playable[_tile_key(m.tile)] = true
 
 	# Bot hand: face-down backs.
 	_clear(_bot_hand_box)
 	for t in _round.hands[BOT].tiles:
 		_bot_hand_box.add_child(_make_back(t))
 
-	# Board: the player-placed snake, drawn at each tile's stored transform inside
-	# _board_content, which is then scaled and centered to fit the field.
+	# Board: re-flow the whole chain into a clean, always-fitting serpentine, then
+	# scale + center it. While choosing an end, the two ends light up clickably.
+	_relayout()
 	_clear(_board_content)
-	for rec in _placed:
+	var choosing := _selected_tile != null
+	for i in range(_placed.size()):
+		var rec: Dictionary = _placed[i]
+		var pick_side := -1
+		if choosing and i == 0 and _has_pending(Board.Side.LEFT):
+			pick_side = Board.Side.LEFT
+		elif choosing and i == _placed.size() - 1 and _has_pending(Board.Side.RIGHT):
+			pick_side = Board.Side.RIGHT
 		var bview := TileView.new()
-		bview.configure(tile_theme, rec["tile"], rec["a"], rec["b"], rec["vertical"], true, false)
+		bview.configure(tile_theme, rec["tile"], rec["a"], rec["b"], rec["vertical"], true, pick_side >= 0)
 		bview.position = rec["pos"]
 		bview.size = rec["size"]
+		if pick_side >= 0:
+			bview.set_highlighted(true)
+			bview.clicked.connect(_on_end_clicked.bind(pick_side))
 		_board_content.add_child(bview)
 		if _last_played != null and rec["tile"].equals(_last_played):
 			bview.set_recent(true)
@@ -757,10 +629,10 @@ func _render() -> void:
 	_pop_pending = false
 	_autofit()
 
-	# Player hand: drag playable (highlighted) tiles onto the board.
+	# Player hand: click a highlighted tile to play it (then an end if it fits both).
 	_clear(_player_hand_box)
 	for t in _round.hands[HUMAN].tiles:
-		var hl: bool = playable.has(_tile_key(t))
+		var hl: bool = playable.has(_tile_key(t)) or (_selected_tile != null and t.equals(_selected_tile))
 		var view := _make_hand_tile(t, hl)
 		view.clicked.connect(_on_hand_pressed)
 		_player_hand_box.add_child(view)
@@ -783,14 +655,14 @@ func _status_text() -> String:
 	var line3 := ""
 	match _state:
 		State.PLAYER_TURN:
-			if _held_tile != null:
-				line3 = "Click a glowing spot to place it  (Esc to cancel)."
+			if _selected_tile != null:
+				line3 = "Click an end of the board to play it."
 			elif _round.board.is_empty():
 				line3 = "Your turn — click a tile to lead."
-			elif not _player_has_placeable():
-				line3 = "No move fits — draw a tile." if _draw_button_would_show() else "No move fits — you must pass."
+			elif _round.legal_moves().is_empty():
+				line3 = "No legal move — draw a tile." if _draw_button_would_show() else "No legal move — you must pass."
 			else:
-				line3 = "Your turn — click a highlighted tile, then click a spot."
+				line3 = "Your turn — click a highlighted tile to play."
 		State.BOT_TURN:
 			line3 = "Bot is thinking…"
 		_:
