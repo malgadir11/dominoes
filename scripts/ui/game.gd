@@ -44,6 +44,7 @@ var _cursor_ghost: TileView = null
 # Polish: the most recently played tile (highlighted + pop-animated once).
 var _last_played: Tile = null
 var _pop_pending := false
+var _fit_tween: Tween  # smoothly slides/scales the board when it re-fits
 
 # Placeholder sound effects (swappable filler in assets/audio/).
 var _sfx := {}
@@ -56,6 +57,7 @@ var _game_root: Control
 var _status_label: Label
 var _bot_hand_box: HBoxContainer
 var _board_area: Control
+var _board_content: Control
 var _player_hand_box: HBoxContainer
 var _draw_button: Button
 var _pass_button: Button
@@ -193,11 +195,14 @@ func _build_game_ui() -> void:
 	field.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	field.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	col.add_child(field)
-	# Board area: fills the field's inner area; tiles are positioned absolutely in
-	# its coordinates and clipped to the border (can't be placed out of bounds).
+	# Board area: fills the field's inner area and clips to the border. Tiles live
+	# in _board_content, which is auto-scaled and re-centered every turn so the
+	# whole chain always fits neatly inside the field.
 	_board_area = Control.new()
 	_board_area.clip_contents = true
 	field.add_child(_board_area)
+	_board_content = Control.new()
+	_board_area.add_child(_board_content)
 
 	var spacer_bottom := Control.new()
 	spacer_bottom.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -516,6 +521,8 @@ func _pick_up(t: Tile) -> void:
 	_held_candidates = _candidates_for(t)
 	if _held_candidates.is_empty():
 		return  # no in-bounds spot to place it
+	if _fit_tween != null and _fit_tween.is_valid():
+		_fit_tween.kill()  # freeze the board so drag coordinates stay stable
 	_held_tile = t
 	_held_index = -1
 	_build_held_layer()
@@ -526,8 +533,7 @@ func _build_held_layer() -> void:
 	var s := tile_theme.half_size
 	_held_layer = Control.new()
 	_held_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_held_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_board_area.add_child(_held_layer)
+	_board_content.add_child(_held_layer)  # shares the board's auto-fit scale
 	_held_ghosts = []
 	for c in _held_candidates:
 		var geo: Dictionary = c["geo"]
@@ -561,17 +567,19 @@ func _input(event: InputEvent) -> void:
 
 func _update_held() -> void:
 	var s := tile_theme.half_size
-	var mouse := _board_area.get_local_mouse_position()
+	# Candidate positions are in board-content (layout) coords; the field rect is
+	# in board-area coords. Use each for its own check so the auto-fit scale works.
+	var content_mouse := _board_content.get_local_mouse_position()
 	if _cursor_ghost != null:
-		_cursor_ghost.position = mouse - Vector2(s, s * 0.5)
-	var inside := Rect2(Vector2.ZERO, _field_inner()).has_point(mouse)
+		_cursor_ghost.position = content_mouse - Vector2(s, s * 0.5)
+	var inside := Rect2(Vector2.ZERO, _field_inner()).has_point(_board_area.get_local_mouse_position())
 	var best := -1
 	if inside:
 		var best_d := INF
 		for i in range(_held_candidates.size()):
 			var geo: Dictionary = _held_candidates[i]["geo"]
 			var center: Vector2 = geo["pos"] + geo["size"] * 0.5
-			var dist := mouse.distance_to(center)
+			var dist := content_mouse.distance_to(center)
 			if dist < best_d:
 				best_d = dist
 				best = i
@@ -614,6 +622,41 @@ func _after_player_move() -> void:
 		_finish_round()
 	else:
 		_run_bot()
+
+
+# Scale and re-center the whole chain so it always fits neatly inside the field,
+# no matter how far it has snaked — the board "smart-adjusts" as it grows.
+func _autofit() -> void:
+	if _placed.is_empty():
+		_board_content.scale = Vector2.ONE
+		_board_content.position = Vector2.ZERO
+		return
+	var lo := Vector2(INF, INF)
+	var hi := Vector2(-INF, -INF)
+	for rec in _placed:
+		var p: Vector2 = rec["pos"]
+		var sz: Vector2 = rec["size"]
+		lo.x = minf(lo.x, p.x)
+		lo.y = minf(lo.y, p.y)
+		hi.x = maxf(hi.x, p.x + sz.x)
+		hi.y = maxf(hi.y, p.y + sz.y)
+	var bbox := hi - lo
+	var field := _field_inner()
+	var pad := 80.0
+	var sc := minf((field.x - pad) / maxf(bbox.x, 1.0), (field.y - pad) / maxf(bbox.y, 1.0))
+	sc = minf(sc, 1.15)  # don't over-zoom a tiny board
+	var target_scale := Vector2(sc, sc)
+	var target_pos := (field - bbox * sc) * 0.5 - lo * sc
+	if _fit_tween != null and _fit_tween.is_valid():
+		_fit_tween.kill()
+	# Slide/scale smoothly into place, unless this is the first tile.
+	if _board_content.get_child_count() <= 1 or _board_content.scale == Vector2.ONE and _board_content.position == Vector2.ZERO:
+		_board_content.scale = target_scale
+		_board_content.position = target_pos
+	else:
+		_fit_tween = create_tween().set_parallel(true).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		_fit_tween.tween_property(_board_content, "scale", target_scale, 0.28)
+		_fit_tween.tween_property(_board_content, "position", target_pos, 0.28)
 
 
 func _show_banner(res: RoundResult) -> void:
@@ -698,19 +741,21 @@ func _render() -> void:
 	for t in _round.hands[BOT].tiles:
 		_bot_hand_box.add_child(_make_back(t))
 
-	# Board: the player-placed snake, drawn at each tile's stored transform.
-	_clear(_board_area)
+	# Board: the player-placed snake, drawn at each tile's stored transform inside
+	# _board_content, which is then scaled and centered to fit the field.
+	_clear(_board_content)
 	for rec in _placed:
 		var bview := TileView.new()
 		bview.configure(tile_theme, rec["tile"], rec["a"], rec["b"], rec["vertical"], true, false)
 		bview.position = rec["pos"]
 		bview.size = rec["size"]
-		_board_area.add_child(bview)
+		_board_content.add_child(bview)
 		if _last_played != null and rec["tile"].equals(_last_played):
 			bview.set_recent(true)
 			if _pop_pending:
 				bview.pop_in()
 	_pop_pending = false
+	_autofit()
 
 	# Player hand: drag playable (highlighted) tiles onto the board.
 	_clear(_player_hand_box)
