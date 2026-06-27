@@ -40,7 +40,7 @@ func _initialize() -> void:
 	var theme: TileTheme = scene.get("tile_theme")
 	var bs: float = theme.half_size
 	var cen: Vector2 = scene.call("_field_inner") * 0.5
-	var anchor := {"pos": Vector2(cen.x + bs, cen.y), "facing": Vector2(1, 0), "vertical": false, "h_dir": Vector2(1, 0)}
+	var anchor := {"pos": Vector2(cen.x + bs, cen.y), "facing": Vector2(1, 0), "vertical": false, "h_dir": Vector2(1, 0), "run": 0}
 	var placed := 1  # the opener
 	for i in range(27):
 		var d: Vector2 = scene.call("_layout_dir", anchor, false, Vector2(0, -1))  # right side wraps up
@@ -49,7 +49,10 @@ func _initialize() -> void:
 			break  # no in-bounds room left
 		placed += 1
 		var nh: Vector2 = d if d.y == 0.0 else anchor["h_dir"]
-		anchor = {"pos": geo["new_anchor"], "facing": geo["new_facing"], "vertical": geo["vertical"], "h_dir": nh}
+		var nr := 0
+		if d.y == 0.0:
+			nr = (int(anchor["run"]) + 1) if anchor["facing"].y == 0.0 else 1
+		anchor = {"pos": geo["new_anchor"], "facing": geo["new_facing"], "vertical": geo["vertical"], "h_dir": nh, "run": nr}
 	if placed >= 28:
 		passed += 1
 		print("  PASS  all 28 tiles fit in the field even piled on one end")

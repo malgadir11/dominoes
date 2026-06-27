@@ -12,6 +12,7 @@ const HUMAN := 0
 const BOT := 1
 const BOT_DELAY := 0.55  # seconds, so the bot's moves are readable
 const FIELD_SIZE := Vector2(1760, 660)  # the bordered play field (fits all 28 tiles)
+const MAX_RUN := 6  # tiles in a horizontal row before the snake turns (looks tidy)
 
 enum State { SETUP, PLAYER_TURN, BOT_TURN, ROUND_OVER, MATCH_OVER }
 
@@ -454,12 +455,12 @@ func _relayout() -> void:
 	var right_anchor: Dictionary
 	if eo["is_double"]:
 		_placed.append({"tile": eo["tile"], "pos": Vector2(c.x - s * 0.5, c.y - s), "size": Vector2(s, 2.0 * s), "a": eo["left_val"], "b": eo["left_val"], "vertical": true})
-		left_anchor = {"pos": Vector2(c.x - s * 0.5, c.y), "facing": Vector2(-1, 0), "vertical": true, "h_dir": Vector2(-1, 0)}
-		right_anchor = {"pos": Vector2(c.x + s * 0.5, c.y), "facing": Vector2(1, 0), "vertical": true, "h_dir": Vector2(1, 0)}
+		left_anchor = {"pos": Vector2(c.x - s * 0.5, c.y), "facing": Vector2(-1, 0), "vertical": true, "h_dir": Vector2(-1, 0), "run": 0}
+		right_anchor = {"pos": Vector2(c.x + s * 0.5, c.y), "facing": Vector2(1, 0), "vertical": true, "h_dir": Vector2(1, 0), "run": 0}
 	else:
 		_placed.append({"tile": eo["tile"], "pos": Vector2(c.x - s, c.y - s * 0.5), "size": Vector2(2.0 * s, s), "a": eo["left_val"], "b": eo["right_val"], "vertical": false})
-		left_anchor = {"pos": Vector2(c.x - s, c.y), "facing": Vector2(-1, 0), "vertical": false, "h_dir": Vector2(-1, 0)}
-		right_anchor = {"pos": Vector2(c.x + s, c.y), "facing": Vector2(1, 0), "vertical": false, "h_dir": Vector2(1, 0)}
+		left_anchor = {"pos": Vector2(c.x - s, c.y), "facing": Vector2(-1, 0), "vertical": false, "h_dir": Vector2(-1, 0), "run": 0}
+		right_anchor = {"pos": Vector2(c.x + s, c.y), "facing": Vector2(1, 0), "vertical": false, "h_dir": Vector2(1, 0), "run": 0}
 	# Right of the opener wraps UPWARD; the connecting value is each tile's left.
 	var anchor := right_anchor
 	for i in range(oi + 1, layout.size()):
@@ -476,7 +477,11 @@ func _place_walk(entry: Dictionary, anchor: Dictionary, turn_dir: Vector2, conne
 	var geo := _tile_geometry(anchor["pos"], anchor["facing"], d, connecting, exposed, entry["is_double"])
 	_placed.append({"tile": entry["tile"], "pos": geo["pos"], "size": geo["size"], "a": geo["a"], "b": geo["b"], "vertical": geo["vertical"]})
 	var new_h: Vector2 = d if d.y == 0.0 else anchor.get("h_dir", anchor["facing"])
-	return {"pos": geo["new_anchor"], "facing": geo["new_facing"], "vertical": geo["vertical"], "h_dir": new_h}
+	# Count tiles in the current horizontal row; a turn (vertical) starts a new row.
+	var new_run := 0
+	if d.y == 0.0:
+		new_run = (anchor.get("run", 0) + 1) if anchor["facing"].y == 0.0 else 1
+	return {"pos": geo["new_anchor"], "facing": geo["new_facing"], "vertical": geo["vertical"], "h_dir": new_h, "run": new_run}
 
 
 # Where the opener (spinner) sits in the played sequence — the chain splits here.
@@ -498,6 +503,8 @@ func _layout_dir(anchor: Dictionary, is_double: bool, turn_dir: Vector2) -> Vect
 	if f.y == 0.0:
 		if anchor.get("vertical", false):
 			dirs = [f]  # off a crosswise double, only continue straight
+		elif anchor.get("run", 0) >= MAX_RUN:
+			dirs = [turn_dir, -turn_dir]  # row is long enough — turn into a new row
 		else:
 			dirs = [f, turn_dir, -turn_dir]  # straight, preferred turn, then fallback
 	else:
