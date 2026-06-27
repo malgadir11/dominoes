@@ -15,12 +15,12 @@ extends Resource
 ## FILLER: the defaults below are programmer-art placeholders, not final art.
 
 @export_group("Dimensions")
-@export var half_size: float = 64.0       ## one square half of a tile, in px
-@export var corner_radius: float = 9.0
-@export var border_width: float = 3.0
-@export var divider_thickness: float = 3.0
-@export var pip_radius: float = 7.0
-@export var safe_margin: float = 12.0     ## inset where pips are allowed to sit
+@export var half_size: float = 50.0       ## one square half of a tile, in px
+@export var corner_radius: float = 7.0
+@export var border_width: float = 2.0
+@export var divider_thickness: float = 2.0
+@export var pip_radius: float = 5.0
+@export var safe_margin: float = 9.0      ## inset where pips are allowed to sit
 
 @export_group("Colors")
 @export var body_color: Color = Color("f4f4f2")     ## face-up tile body

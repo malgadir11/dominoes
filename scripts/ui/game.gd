@@ -11,7 +11,7 @@ const TARGET_SCORE := 75
 const HUMAN := 0
 const BOT := 1
 const BOT_DELAY := 0.55  # seconds, so the bot's moves are readable
-const FIELD_SIZE := Vector2(1100, 540)  # the bordered play field
+const FIELD_SIZE := Vector2(1760, 660)  # the bordered play field (fits all 28 tiles)
 
 enum State { SETUP, PLAYER_TURN, BOT_TURN, ROUND_OVER, MATCH_OVER }
 
@@ -308,7 +308,12 @@ func _run_bot() -> void:
 	while not _round.finished and _round.current == BOT:
 		await get_tree().create_timer(BOT_DELAY).timeout
 		var moves := _round.legal_moves()
-		if moves.is_empty():
+		var placeable: Array[Move] = []
+		for m in moves:
+			if _round.board.is_empty() or _move_placeable(m):
+				placeable.append(m)
+		if placeable.is_empty():
+			# Nothing fits in bounds (no legal move, or the field is full here).
 			if _variant == Round.Variant.DRAW and not _round.boneyard_empty():
 				_round.draw_tile()
 				_play("draw")
@@ -317,6 +322,8 @@ func _run_bot() -> void:
 			_round.pass_turn()
 		else:
 			var bot_move := _bot.choose_move(_round, BOT)
+			if not (_round.board.is_empty() or _move_placeable(bot_move)):
+				bot_move = placeable[0]  # the AI's pick doesn't fit; use one that does
 			if _round.board.is_empty():
 				_place_opener(bot_move)
 			else:
@@ -416,9 +423,19 @@ func _tile_geometry(m: Vector2, f: Vector2, d: Vector2, connecting: int, exposed
 	return {"pos": lo, "size": hi - lo, "a": a, "b": b, "vertical": d.y != 0.0, "new_anchor": far_c + d * (s * 0.5), "new_facing": d}
 
 
-func _in_bounds(pos: Vector2, size: Vector2) -> bool:
+func _in_bounds(pos: Vector2, size: Vector2, reserve: Vector2 = Vector2.ZERO) -> bool:
 	var inner := _field_inner()
-	return pos.x >= -0.5 and pos.y >= -0.5 and pos.x + size.x <= inner.x + 0.5 and pos.y + size.y <= inner.y + 0.5
+	var s := tile_theme.half_size
+	var p := pos
+	var sz := size
+	# Reserve a tile's room in the travel direction so the corner that will turn
+	# the line still fits — this is why the snake turns before reaching the wall.
+	if reserve.x > 0.0:
+		sz.x += s
+	elif reserve.x < 0.0:
+		p.x -= s
+		sz.x += s
+	return p.x >= -0.5 and p.y >= -0.5 and p.x + sz.x <= inner.x + 0.5 and p.y + sz.y <= inner.y + 0.5
 
 
 # Every in-bounds way to play `t`: each matching end, in its allowed directions.
@@ -435,7 +452,8 @@ func _candidates_for(t: Tile) -> Array:
 		var f: Vector2 = anchor["facing"]
 		for d in _candidate_dirs(side, anchor, t.is_double()):
 			var geo := _tile_geometry(m, f, d, end_val, t.other_end(end_val), t.is_double())
-			if _in_bounds(geo["pos"], geo["size"]):
+			var reserve: Vector2 = d if d.y == 0.0 else Vector2.ZERO
+			if _in_bounds(geo["pos"], geo["size"], reserve):
 				res.append({"side": side, "dir": d, "geo": geo})
 	return res
 
@@ -453,6 +471,28 @@ func _move_for_side(t: Tile, side: int) -> Move:
 		if m.tile.equals(t) and m.side == side:
 			return m
 	return null
+
+
+# A move is placeable only if it has an in-bounds spot — so nothing is ever put
+# outside the field, by the player or the bot.
+func _move_placeable(m: Move) -> bool:
+	for c in _candidates_for(m.tile):
+		if c["side"] == m.side:
+			return true
+	return false
+
+
+func _tile_playable(t: Tile) -> bool:
+	if _round.board.is_empty():
+		return true  # any tile can lead; the opener goes at the center, always in bounds
+	return not _candidates_for(t).is_empty()
+
+
+func _player_has_placeable() -> bool:
+	for t in _round.hands[HUMAN].tiles:
+		if _tile_playable(t):
+			return true
+	return false
 
 
 # ---------------------------------------------------------------- click to place
@@ -646,10 +686,12 @@ func _on_next_pressed() -> void:
 func _render() -> void:
 	_status_label.text = _status_text()
 
-	var legal := _player_legal_moves()
+	# A hand tile is highlighted only if it has an in-bounds spot to go.
 	var playable := {}
-	for m in legal:
-		playable[_tile_key(m.tile)] = true
+	if _state == State.PLAYER_TURN and _round.current == HUMAN:
+		for t in _round.hands[HUMAN].tiles:
+			if _tile_playable(t):
+				playable[_tile_key(t)] = true
 
 	# Bot hand: face-down backs.
 	_clear(_bot_hand_box)
@@ -678,7 +720,7 @@ func _render() -> void:
 		view.clicked.connect(_on_hand_pressed)
 		_player_hand_box.add_child(view)
 
-	var stuck: bool = _state == State.PLAYER_TURN and legal.is_empty()
+	var stuck: bool = _state == State.PLAYER_TURN and _round.current == HUMAN and playable.is_empty()
 	_draw_button.visible = stuck and _variant == Round.Variant.DRAW and not _round.boneyard_empty()
 	_pass_button.visible = stuck and not _draw_button.visible
 	var over: bool = _state == State.ROUND_OVER or _state == State.MATCH_OVER
@@ -700,8 +742,8 @@ func _status_text() -> String:
 				line3 = "Click a glowing spot to place it  (Esc to cancel)."
 			elif _round.board.is_empty():
 				line3 = "Your turn — click a tile to lead."
-			elif _player_legal_moves().is_empty():
-				line3 = "No legal move — draw a tile." if _draw_button_would_show() else "No legal move — you must pass."
+			elif not _player_has_placeable():
+				line3 = "No move fits — draw a tile." if _draw_button_would_show() else "No move fits — you must pass."
 			else:
 				line3 = "Your turn — click a highlighted tile, then click a spot."
 		State.BOT_TURN:

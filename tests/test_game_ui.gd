@@ -86,5 +86,36 @@ func _initialize() -> void:
 		failed += 1
 		print("  FAIL  just-turned end had no placement (would get stuck at the border)")
 
+	# Capacity guarantee: a full 28-tile chain piled on ONE end must fit in the
+	# field. Greedily place 27 tiles on the right end (after the opener) using the
+	# snake's auto direction, and confirm every one stays in bounds.
+	var theme: TileTheme = scene.get("tile_theme")
+	var bs: float = theme.half_size
+	var inner: Vector2 = scene.call("_field_inner")
+	var cen := inner * 0.5
+	var anchor := {"pos": Vector2(cen.x + bs, cen.y), "facing": Vector2(1, 0), "vertical": false, "h_dir": Vector2(1, 0)}
+	var placed_on_one_end := 1  # the opener
+	for i in range(27):
+		var chosen_dir := Vector2.ZERO
+		var chosen_geo := {}
+		for d in scene.call("_candidate_dirs", Board.Side.RIGHT, anchor, false):
+			var geo: Dictionary = scene.call("_tile_geometry", anchor["pos"], anchor["facing"], d, 0, 0, false)
+			var reserve: Vector2 = d if d.y == 0.0 else Vector2.ZERO
+			if scene.call("_in_bounds", geo["pos"], geo["size"], reserve):
+				chosen_dir = d
+				chosen_geo = geo
+				break
+		if chosen_geo.is_empty():
+			break  # ran out of in-bounds room
+		placed_on_one_end += 1
+		var nh: Vector2 = chosen_dir if chosen_dir.y == 0.0 else anchor["h_dir"]
+		anchor = {"pos": chosen_geo["new_anchor"], "facing": chosen_geo["new_facing"], "vertical": chosen_geo["vertical"], "h_dir": nh}
+	if placed_on_one_end >= 28:
+		passed += 1
+		print("  PASS  all 28 tiles fit in the field even piled on one end")
+	else:
+		failed += 1
+		print("  FAIL  only %d tiles fit on one end before running out of room" % placed_on_one_end)
+
 	print("\nPassed: %d   Failed: %d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
