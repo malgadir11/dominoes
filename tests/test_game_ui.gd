@@ -87,5 +87,66 @@ func _initialize() -> void:
 		failed += 1
 		print("  FAIL  end mapping wrong (left_ok=%s right_ok=%s li=%d ri=%d)" % [left_ok, right_ok, li, ri])
 
+	# Physical connection: every consecutive pair in the chain must be laid flush
+	# edge-to-edge in the RENDERED layout — no gaps, no overlaps — no matter how far
+	# the snake wraps. Regression for "pieces stop connecting after a while" (the
+	# corner gaps that accumulated once the chain turned several times).
+	var deck3 := Deck.new()
+	var rng3 := RandomNumberGenerator.new()
+	rng3.seed = 7
+	deck3.shuffle_deck(rng3)
+	var r3 := Round.deal(2, 7, Round.Variant.DRAW, deck3, 0)
+	var opener3: Tile = null
+	if r3.has_forced_opener():
+		var op3: Move = r3.legal_moves()[0]
+		opener3 = op3.tile
+		r3.apply_move(op3)
+	for _i in range(200):
+		if r3.finished:
+			break
+		var mv := r3.legal_moves()
+		if mv.is_empty():
+			if not r3.boneyard_empty():
+				r3.draw_tile()
+			else:
+				r3.pass_turn()
+			continue
+		r3.apply_move(mv[0])
+	scene.set("_round", r3)
+	scene.set("_opener_tile", opener3)
+	scene.call("_relayout")
+	var pl3: Array = scene.get("_placed")
+	var lay3: Array = r3.board.layout
+	var by_key := {}
+	for rec in pl3:
+		by_key[rec["tile"].low * 7 + rec["tile"].high] = rec
+	var disconnects := 0
+	var worst := 0.0
+	for k in range(lay3.size() - 1):
+		var ta: Tile = lay3[k]["tile"]
+		var tb: Tile = lay3[k + 1]["tile"]
+		var ra: Dictionary = by_key[ta.low * 7 + ta.high]
+		var rb: Dictionary = by_key[tb.low * 7 + tb.high]
+		var gap: float = _edge_gap(ra["pos"], ra["size"], rb["pos"], rb["size"])
+		if gap > 0.6:  # more than ~1px of separation (or overlap) = not flush
+			disconnects += 1
+			worst = maxf(worst, gap)
+	if disconnects == 0:
+		passed += 1
+		print("  PASS  all %d chain joints are flush across %d wraps" % [lay3.size() - 1, lay3.size()])
+	else:
+		failed += 1
+		print("  FAIL  %d of %d joints not flush (worst gap/overlap %.1fpx)" % [disconnects, lay3.size() - 1, worst])
+
 	print("\nPassed: %d   Failed: %d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
+
+
+# Distance two tile rectangles are from being laid flush edge-to-edge: 0 when they
+# share an edge exactly, positive for a gap between them OR an interior overlap.
+func _edge_gap(ap: Vector2, asz: Vector2, bp: Vector2, bsz: Vector2) -> float:
+	var ox: float = minf(ap.x + asz.x, bp.x + bsz.x) - maxf(ap.x, bp.x)  # >0 overlap, <0 gap
+	var oy: float = minf(ap.y + asz.y, bp.y + bsz.y) - maxf(ap.y, bp.y)
+	if ox > 0.0 and oy > 0.0:
+		return minf(ox, oy)  # rectangles overlap in 2D — penetration depth
+	return maxf(-ox, -oy)    # otherwise the separation (0 when flush)

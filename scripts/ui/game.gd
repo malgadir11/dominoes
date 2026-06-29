@@ -486,12 +486,6 @@ func _relayout() -> void:
 func _place_walk(entry: Dictionary, anchor: Dictionary, turn_dir: Vector2, connecting: int, exposed: int) -> Dictionary:
 	var d := _layout_dir(anchor, entry["is_double"], turn_dir)
 	var geo := _tile_geometry(anchor["pos"], anchor["facing"], d, connecting, exposed, entry["is_double"])
-	# Starting a new row (a wrap off a turn): push it an extra half-tile away so the
-	# crosswise doubles in either row have clear space and never look stacked.
-	if anchor["facing"].y != 0.0 and d.y == 0.0:
-		var shift: Vector2 = anchor["facing"] * (tile_theme.half_size * 0.7)
-		geo["pos"] = geo["pos"] + shift
-		geo["new_anchor"] = geo["new_anchor"] + shift
 	_placed.append({"tile": entry["tile"], "pos": geo["pos"], "size": geo["size"], "a": geo["a"], "b": geo["b"], "vertical": geo["vertical"]})
 	var new_h: Vector2 = d if d.y == 0.0 else anchor.get("h_dir", anchor["facing"])
 	# Count tiles in the current horizontal row; a turn (vertical) starts a new row.
