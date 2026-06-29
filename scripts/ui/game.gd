@@ -30,6 +30,10 @@ var _status_extra := ""
 # The board layout is recomputed from the played sequence every turn (see
 # _relayout). Each entry: {"tile", "pos", "size", "a", "b", "vertical"}.
 var _placed: Array = []
+# Indices into _placed of the two open ends. _placed is ordered [opener, right
+# walk…, left walk…], so the ends are NOT 0 / size-1 — they're tracked here.
+var _left_end_idx := 0
+var _right_end_idx := 0
 var _opener_tile: Tile = null  # the spinner; the chain splits here (left↓, right↑)
 
 # Route selection: when a clicked tile can go on either end, the player clicks an
@@ -444,6 +448,8 @@ func _in_bounds(pos: Vector2, size: Vector2, reserve: Vector2 = Vector2.ZERO) ->
 # tiles are always laid end-to-end (never crammed side-by-side).
 func _relayout() -> void:
 	_placed = []
+	_left_end_idx = 0
+	_right_end_idx = 0
 	var layout: Array = _round.board.layout
 	if layout.is_empty():
 		return
@@ -462,13 +468,18 @@ func _relayout() -> void:
 		left_anchor = {"pos": Vector2(c.x - s, c.y), "facing": Vector2(-1, 0), "vertical": false, "h_dir": Vector2(-1, 0), "run": 0}
 		right_anchor = {"pos": Vector2(c.x + s, c.y), "facing": Vector2(1, 0), "vertical": false, "h_dir": Vector2(1, 0), "run": 0}
 	# Right of the opener wraps UPWARD; the connecting value is each tile's left.
+	# The last tile appended here is the physical RIGHT end (opener if none).
 	var anchor := right_anchor
 	for i in range(oi + 1, layout.size()):
 		anchor = _place_walk(layout[i], anchor, Vector2(0, -1), layout[i]["left_val"], layout[i]["right_val"])
+	_right_end_idx = _placed.size() - 1
 	# Left of the opener wraps DOWNWARD; walking left, it connects on its right.
+	# The last tile appended here is the physical LEFT end (opener if none).
+	var left_start := _placed.size()
 	anchor = left_anchor
 	for i in range(oi - 1, -1, -1):
 		anchor = _place_walk(layout[i], anchor, Vector2(0, 1), layout[i]["right_val"], layout[i]["left_val"])
+	_left_end_idx = (_placed.size() - 1) if _placed.size() > left_start else 0
 
 
 # Place one tile of the walk and return the new anchor.
@@ -654,9 +665,9 @@ func _render() -> void:
 	for i in range(_placed.size()):
 		var rec: Dictionary = _placed[i]
 		var pick_side := -1
-		if choosing and i == 0 and _has_pending(Board.Side.LEFT):
+		if choosing and i == _left_end_idx and _has_pending(Board.Side.LEFT):
 			pick_side = Board.Side.LEFT
-		elif choosing and i == _placed.size() - 1 and _has_pending(Board.Side.RIGHT):
+		elif choosing and i == _right_end_idx and _has_pending(Board.Side.RIGHT):
 			pick_side = Board.Side.RIGHT
 		var bview := TileView.new()
 		bview.configure(tile_theme, rec["tile"], rec["a"], rec["b"], rec["vertical"], true, pick_side >= 0)

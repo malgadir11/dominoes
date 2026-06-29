@@ -60,5 +60,32 @@ func _initialize() -> void:
 		failed += 1
 		print("  FAIL  only %d tiles fit before running out of room" % placed)
 
+	# End mapping: the highlighted clickable ends must be the PHYSICAL ends of the
+	# chain. _placed is ordered [opener, right-walk…, left-walk…], so the ends are
+	# not index 0 / size-1 — _relayout tracks _left_end_idx / _right_end_idx. With
+	# an opener in the middle of the chain, those must point at layout[0] (left) and
+	# layout[last] (right). Regression for the "can't play on the right end" bug.
+	var r2 := Round.deal(2, 7, Round.Variant.BLOCK, deck, 0)
+	var b: Board = r2.board
+	b.play(Tile.new(3, 3), Board.Side.LEFT)   # opener (board empty)
+	b.play(Tile.new(3, 5), Board.Side.RIGHT)
+	b.play(Tile.new(3, 2), Board.Side.LEFT)
+	b.play(Tile.new(5, 6), Board.Side.RIGHT)  # layout: [2|3][3|3][3|5][5|6]
+	scene.set("_round", r2)
+	scene.set("_opener_tile", Tile.new(3, 3))  # opener sits in the middle
+	scene.call("_relayout")
+	var pl: Array = scene.get("_placed")
+	var li: int = scene.get("_left_end_idx")
+	var ri: int = scene.get("_right_end_idx")
+	var lay: Array = b.layout
+	var left_ok: bool = pl[li]["tile"].equals(lay[0]["tile"])
+	var right_ok: bool = pl[ri]["tile"].equals(lay[lay.size() - 1]["tile"])
+	if left_ok and right_ok and li != ri:
+		passed += 1
+		print("  PASS  highlighted ends map to the physical left/right chain ends")
+	else:
+		failed += 1
+		print("  FAIL  end mapping wrong (left_ok=%s right_ok=%s li=%d ri=%d)" % [left_ok, right_ok, li, ri])
+
 	print("\nPassed: %d   Failed: %d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
