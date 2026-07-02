@@ -27,6 +27,11 @@ var _scores := [0, 0]
 var _opener := -1
 var _status_extra := ""
 
+# Coach mode: an EXPERT bot (independent of the opponent) ranks the player's
+# options each turn, marks the best one, and explains why in plain words.
+var _coach_enabled := false
+var _coach_bot: Bot = null
+
 # The board layout is recomputed from the played sequence every turn (see
 # _relayout). Each entry: {"tile", "pos", "size", "a", "b", "vertical"}.
 var _placed: Array = []
@@ -53,8 +58,10 @@ var _sfx := {}
 var _setup_root: Control
 var _difficulty_option: OptionButton
 var _variant_option: OptionButton
+var _coach_check: CheckButton
 var _game_root: Control
 var _status_label: Label
+var _coach_label: Label
 var _bot_hand_box: HBoxContainer
 var _board_area: Control
 var _board_content: Control
@@ -127,6 +134,10 @@ func _build_setup_ui() -> void:
 	_variant_option.selected = Round.Variant.DRAW
 	panel.add_child(_labeled_row("Rules", _variant_option))
 
+	_coach_check = CheckButton.new()
+	_coach_check.text = "Show the best move and explain why"
+	panel.add_child(_labeled_row("Coach", _coach_check))
+
 	var start := Button.new()
 	start.text = "Start match (first to %d)" % TARGET_SCORE
 	start.pressed.connect(_on_start_pressed)
@@ -172,6 +183,13 @@ func _build_game_ui() -> void:
 	_status_label.add_theme_color_override("font_color", tile_theme.text_color)
 	_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(_status_label)
+
+	# Coach line: the recommended move + a one-sentence reason, in coach color.
+	_coach_label = Label.new()
+	_coach_label.add_theme_font_size_override("font_size", 22)
+	_coach_label.add_theme_color_override("font_color", tile_theme.coach_color)
+	_coach_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(_coach_label)
 
 	_bot_hand_box = _centered_hbox()
 	col.add_child(_bot_hand_box)
@@ -271,6 +289,8 @@ func _show_setup() -> void:
 func _on_start_pressed() -> void:
 	_variant = _variant_option.selected
 	_bot = Bot.new(_difficulty_option.selected)
+	_coach_enabled = _coach_check.button_pressed
+	_coach_bot = Bot.new(Bot.Difficulty.EXPERT) if _coach_enabled else null
 	_setup_root.visible = false
 	_game_root.visible = true
 	_start_match()
@@ -646,6 +666,29 @@ func _render() -> void:
 		for m in _round.legal_moves():
 			playable[_tile_key(m.tile)] = true
 
+	# Coach: rank the player's options, mark the best one, say why. While the
+	# player is choosing an end for a two-way tile, recommend the better end.
+	var coach_tile: Tile = null
+	var coach_end_pick := -1
+	_coach_label.text = ""
+	if _coach_enabled and _state == State.PLAYER_TURN and _round.current == HUMAN and not playable.is_empty():
+		var ranked := _coach_bot.rank_moves(_round, HUMAN)
+		if not ranked.is_empty():
+			if _selected_tile == null:
+				var best: Dictionary = ranked[0]
+				coach_tile = best["move"].tile
+				var where := ""
+				if not _round.board.is_empty() and _moves_for(coach_tile).size() > 1:
+					where = " on the left" if best["move"].side == Board.Side.LEFT else " on the right"
+				_coach_label.text = "Coach: play [%d|%d]%s — %s" % [coach_tile.low, coach_tile.high, where, best["why"]]
+			else:
+				for e in ranked:  # sorted best-first: first hit is the better end
+					if e["move"].tile.equals(_selected_tile):
+						coach_end_pick = e["move"].side
+						var end_name := "left" if coach_end_pick == Board.Side.LEFT else "right"
+						_coach_label.text = "Coach: the %s end — %s" % [end_name, e["why"]]
+						break
+
 	# Bot hand: face-down backs.
 	_clear(_bot_hand_box)
 	for t in _round.hands[BOT].tiles:
@@ -670,6 +713,8 @@ func _render() -> void:
 		if pick_side >= 0:
 			bview.set_highlighted(true)
 			bview.clicked.connect(_on_end_clicked.bind(pick_side))
+			if pick_side == coach_end_pick:
+				bview.set_coach(true)
 		_board_content.add_child(bview)
 		if _last_played != null and rec["tile"].equals(_last_played):
 			bview.set_recent(true)
@@ -683,6 +728,8 @@ func _render() -> void:
 	for t in _round.hands[HUMAN].tiles:
 		var hl: bool = playable.has(_tile_key(t)) or (_selected_tile != null and t.equals(_selected_tile))
 		var view := _make_hand_tile(t, hl)
+		if coach_tile != null and t.equals(coach_tile):
+			view.set_coach(true)
 		view.clicked.connect(_on_hand_pressed)
 		_player_hand_box.add_child(view)
 

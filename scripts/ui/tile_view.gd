@@ -20,6 +20,7 @@ var face_up: bool = true
 var interactive: bool = false
 var highlighted: bool = false
 var recent: bool = false  ## the most recently played tile (distinct border)
+var coach: bool = false   ## the coach's recommended move (distinct border)
 var theme_data: TileTheme
 
 
@@ -52,6 +53,11 @@ func set_highlighted(h: bool) -> void:
 
 func set_recent(r: bool) -> void:
 	recent = r
+	queue_redraw()
+
+
+func set_coach(c: bool) -> void:
+	coach = c
 	queue_redraw()
 
 
@@ -95,11 +101,14 @@ func _draw() -> void:
 		sb.bg_color = td.body_color if face_up else td.back_color
 		sb.set_corner_radius_all(int(td.corner_radius))
 		var border := td.border_color
-		if highlighted:
+		if coach:
+			border = td.coach_color  # the recommendation outranks other borders
+		elif highlighted:
 			border = td.highlight_color
 		elif recent:
 			border = td.recent_color
-		sb.set_border_width_all(int(td.border_width) + (1 if (highlighted or recent) else 0))
+		var emphasized := coach or highlighted or recent
+		sb.set_border_width_all(int(td.border_width) + (2 if coach else (1 if emphasized else 0)))
 		sb.border_color = border
 		draw_style_box(sb, rect)
 

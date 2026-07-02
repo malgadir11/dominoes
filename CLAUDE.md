@@ -56,12 +56,29 @@ UI for now) ✅ 5) rendering/input ✅ 6) main menu (only Play-vs-Bots) 7) setti
 
 ## AI notes
 - Fair info only — the bot never peeks at hidden tiles. Difficulty = competence.
-- One `scoreMove`; tiers differ by weights + noise. HARD is the real brain;
-  EASY/MEDIUM are detuned HARD; EXPERT adds pass-inference (deduce an opponent's
-  missing suits from their passes).
-- Measured (match win rates, block): Hard>Easy ~95%, Hard>Medium ~73%.
-  **Expert ≈ Hard (~50%)** — inference only bites late in a round. A known, accepted
-  gap; a shallow look-ahead would widen it if we want Expert to feel distinct.
+- One evaluation (`_eval_move`) shared by all tiers; tiers differ by weights +
+  noise. Features: pip unload, flexibility, probabilistic denial (EXPECTED
+  opponent answers, using live voids + hand-size density), void steering
+  (`w_infer`, with a forced-pass bonus for covering both ends), double shedding.
+- **Void inference reads passes AND draws** (`Round.history` logs draw events —
+  public info). Staleness rule: a later draw on other ends may fill a void, so
+  only voids re-proven by every subsequent draw stay live (bot.gd `_opponent_voids`).
+- **EXPERT has a perfect endgame solver** (scripts/ai/endgame.gd): in 2P DRAW,
+  once the boneyard is dry, unseen == the opponent's exact hand → alpha-beta
+  solves the rest of the round exactly (trigger: unseen.size() == opp hand size;
+  node budget with heuristic fallback).
+- `Bot.rank_moves(r, player)` returns all legal moves best-first with a human
+  "why" per move — powers both choose_move and the UI's Coach mode.
+- Measured (match win rates to 75): Hard>Easy ~92%, Medium>Easy ~93%,
+  Hard>Medium ~56% (block); **Expert>Hard 57% block, 64-67% draw** (solver).
+  Assertions live in test_ai.gd.
+
+## Coach mode (guided play)
+Setup screen toggle ("Coach"). An independent EXPERT bot ranks the player's
+options each turn: the best hand tile gets the theme's `coach_color` border and
+`_coach_label` shows "Coach: play [a|b] — <why>". While choosing an end for a
+two-way tile, the better END tile is coach-marked and named. All explanation
+text comes from bot.gd (`_compose_why` / `_solved_why`), so it's headless-tested.
 
 ## Running it
 From the project folder:

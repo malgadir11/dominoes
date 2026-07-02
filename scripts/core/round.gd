@@ -32,8 +32,9 @@ var result: RoundResult = null
 ## Public event log of the round, in order. Each entry is a Dictionary:
 ##   {"type": "move", "player": int, "tile": Tile, "side": int}
 ##   {"type": "pass", "player": int, "ends": Array}   # open ends faced when passing
-## Visible to everyone (no hidden info) — used by the AI's inference, the move
-## history UI, and multiplayer sync.
+##   {"type": "draw", "player": int, "ends": Array}   # open ends faced when drawing
+## Visible to everyone (no hidden info: at a real table you see who draws and when)
+## — used by the AI's inference, the move history UI, and multiplayer sync.
 var history: Array[Dictionary] = []
 
 var _passes_in_row: int = 0
@@ -113,6 +114,9 @@ func draw_tile() -> Tile:
 	var t := boneyard.draw()
 	if t != null:
 		hands[current].add(t)
+		# A draw is public knowledge and proves the player couldn't answer either
+		# open end at this moment — the AI's void inference feeds on these.
+		history.append({"type": "draw", "player": current, "ends": board.open_ends()})
 	return t
 
 

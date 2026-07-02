@@ -138,6 +138,33 @@ func _initialize() -> void:
 		failed += 1
 		print("  FAIL  %d of %d joints not flush (worst gap/overlap %.1fpx)" % [disconnects, lay3.size() - 1, worst])
 
+	# Coach mode: with coaching on and a playable hand, the recommended tile is
+	# marked and the explanation line is filled in.
+	var cp0 := Hand.new()
+	cp0.add(Tile.new(6, 2))
+	cp0.add(Tile.new(3, 4))
+	var cp1 := Hand.new()
+	cp1.add(Tile.new(5, 5))
+	var cr := Round.from_state([cp0, cp1], Round.Variant.DRAW, Deck.new(-1), 0)
+	cr.board.play(Tile.new(6, 6), Board.Side.LEFT)
+	scene.set("_round", cr)
+	scene.set("_opener_tile", Tile.new(6, 6))
+	scene.set("_state", STATE_PLAYER_TURN)
+	scene.set("_coach_enabled", true)
+	scene.set("_coach_bot", Bot.new(Bot.Difficulty.EXPERT))
+	scene.call("_render")
+	var coach_label: Label = scene.get("_coach_label")
+	var marked := false
+	for v in scene.get("_player_hand_box").get_children():
+		if v.coach and v.tile_ref.equals(Tile.new(6, 2)):
+			marked = true
+	if marked and not coach_label.text.is_empty():
+		passed += 1
+		print("  PASS  coach marks the recommended tile and explains the choice")
+	else:
+		failed += 1
+		print("  FAIL  coach hint missing (marked=%s text='%s')" % [marked, coach_label.text])
+
 	print("\nPassed: %d   Failed: %d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 
