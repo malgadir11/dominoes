@@ -165,6 +165,23 @@ func _initialize() -> void:
 		failed += 1
 		print("  FAIL  coach hint missing (marked=%s text='%s')" % [marked, coach_label.text])
 
+	# Double orientation: crosswise (upright) on a horizontal row, but IN-LINE on
+	# a vertical corner segment — stacked straight down, never lying sideways
+	# between two rows.
+	var s2: float = theme.half_size
+	var mpt := Vector2(400.0, 300.0)
+	var g_row: Dictionary = scene.call("_tile_geometry", mpt, Vector2(1, 0), Vector2(1, 0), 3, 3, true)
+	var g_down: Dictionary = scene.call("_tile_geometry", mpt, Vector2(0, 1), Vector2(0, 1), 0, 0, true)
+	var row_ok: bool = g_row["vertical"] and g_row["size"] == Vector2(s2, 2.0 * s2) and g_row["pos"].y == mpt.y - s2
+	var down_ok: bool = g_down["vertical"] and g_down["size"] == Vector2(s2, 2.0 * s2) \
+		and g_down["pos"] == Vector2(mpt.x - s2 * 0.5, mpt.y) and g_down["new_anchor"] == mpt + Vector2(0, 2.0 * s2)
+	if row_ok and down_ok:
+		passed += 1
+		print("  PASS  doubles: crosswise on rows, in-line stacked on vertical segments")
+	else:
+		failed += 1
+		print("  FAIL  double orientation wrong (row_ok=%s down_ok=%s)" % [row_ok, down_ok])
+
 	# Leave game: mid-match, the temp top-left button returns to the setup screen.
 	scene.call("_on_leave_pressed")
 	var setup_visible: bool = scene.get("_setup_root").visible
