@@ -262,6 +262,26 @@ func _build_game_ui() -> void:
 	_banner_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pad.add_child(_banner_label)
 
+	# TEMP: grey "Leave game" button, top-left — returns to the setup screen.
+	# FILLER until the real main menu exists (then this becomes a proper
+	# pause/quit flow with themed art).
+	var leave := Button.new()
+	leave.text = "Leave game"
+	leave.add_theme_font_size_override("font_size", 16)
+	leave.add_theme_color_override("font_color", Color("e0e0e0"))
+	for style_name in ["normal", "hover", "pressed"]:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color("6b6b6b") if style_name == "normal" else (Color("7d7d7d") if style_name == "hover" else Color("5a5a5a"))
+		sb.set_corner_radius_all(6)
+		for side in ["left", "right"]:
+			sb.set("content_margin_" + side, 14)
+		for side in ["top", "bottom"]:
+			sb.set("content_margin_" + side, 8)
+		leave.add_theme_stylebox_override(style_name, sb)
+	leave.position = Vector2(24, 24)
+	leave.pressed.connect(_on_leave_pressed)
+	_game_root.add_child(leave)
+
 
 func _big_button(text: String) -> Button:
 	var b := Button.new()
@@ -284,6 +304,13 @@ func _show_setup() -> void:
 	_state = State.SETUP
 	_setup_root.visible = true
 	_game_root.visible = false
+
+
+func _on_leave_pressed() -> void:
+	# Abandon the match and return to the setup screen. Setting SETUP also makes
+	# a mid-turn _run_bot loop bail at its next wake-up (it checks the state).
+	_clear_selection()
+	_show_setup()
 
 
 func _on_start_pressed() -> void:
@@ -334,6 +361,8 @@ func _run_bot() -> void:
 	_render()
 	while not _round.finished and _round.current == BOT:
 		await get_tree().create_timer(BOT_DELAY).timeout
+		if _state != State.BOT_TURN:
+			return  # the player left the game while we were thinking
 		var moves := _round.legal_moves()
 		if moves.is_empty():
 			if _variant == Round.Variant.DRAW and not _round.boneyard_empty():

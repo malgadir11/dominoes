@@ -165,6 +165,17 @@ func _initialize() -> void:
 		failed += 1
 		print("  FAIL  coach hint missing (marked=%s text='%s')" % [marked, coach_label.text])
 
+	# Leave game: mid-match, the temp top-left button returns to the setup screen.
+	scene.call("_on_leave_pressed")
+	var setup_visible: bool = scene.get("_setup_root").visible
+	var game_hidden: bool = not scene.get("_game_root").visible
+	if setup_visible and game_hidden and int(scene.get("_state")) == 0:  # State.SETUP
+		passed += 1
+		print("  PASS  leave game returns to the setup screen")
+	else:
+		failed += 1
+		print("  FAIL  leave game didn't reach setup (setup=%s game_hidden=%s state=%s)" % [setup_visible, game_hidden, scene.get("_state")])
+
 	print("\nPassed: %d   Failed: %d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 
