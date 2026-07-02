@@ -165,22 +165,28 @@ func _initialize() -> void:
 		failed += 1
 		print("  FAIL  coach hint missing (marked=%s text='%s')" % [marked, coach_label.text])
 
-	# Double orientation: crosswise (upright) on a horizontal row, but IN-LINE on
-	# a vertical corner segment — stacked straight down, never lying sideways
-	# between two rows.
+	# Double orientation: crosswise everywhere — upright on a horizontal row,
+	# lying flat (centered) on a vertical segment so both halves touch the
+	# matching end. And the walk must continue STRAIGHT past a vertical-segment
+	# crosswise double, never wrapping along its long side.
 	var s2: float = theme.half_size
 	var mpt := Vector2(400.0, 300.0)
 	var g_row: Dictionary = scene.call("_tile_geometry", mpt, Vector2(1, 0), Vector2(1, 0), 3, 3, true)
-	var g_down: Dictionary = scene.call("_tile_geometry", mpt, Vector2(0, 1), Vector2(0, 1), 0, 0, true)
+	var g_down: Dictionary = scene.call("_tile_geometry", mpt, Vector2(0, 1), Vector2(0, 1), 3, 3, true)
 	var row_ok: bool = g_row["vertical"] and g_row["size"] == Vector2(s2, 2.0 * s2) and g_row["pos"].y == mpt.y - s2
-	var down_ok: bool = g_down["vertical"] and g_down["size"] == Vector2(s2, 2.0 * s2) \
-		and g_down["pos"] == Vector2(mpt.x - s2 * 0.5, mpt.y) and g_down["new_anchor"] == mpt + Vector2(0, 2.0 * s2)
-	if row_ok and down_ok:
+	var down_ok: bool = (not g_down["vertical"]) and g_down["size"] == Vector2(2.0 * s2, s2) \
+		and g_down["pos"] == Vector2(mpt.x - s2, mpt.y) and g_down["new_anchor"] == mpt + Vector2(0, s2)
+	# Walk rule: a vertical-facing anchor that is a horizontally-drawn tile (a
+	# crosswise double) prefers straight-down over wrapping.
+	var mid: Vector2 = scene.call("_field_inner") * 0.5
+	var dbl_anchor := {"pos": mid, "facing": Vector2(0, 1), "vertical": false, "h_dir": Vector2(-1, 0), "run": 0}
+	var d_next: Vector2 = scene.call("_layout_dir", dbl_anchor, false, Vector2(0, 1))
+	if row_ok and down_ok and d_next == Vector2(0, 1):
 		passed += 1
-		print("  PASS  doubles: crosswise on rows, in-line stacked on vertical segments")
+		print("  PASS  doubles lie crosswise everywhere; the walk goes straight past them")
 	else:
 		failed += 1
-		print("  FAIL  double orientation wrong (row_ok=%s down_ok=%s)" % [row_ok, down_ok])
+		print("  FAIL  double convention wrong (row_ok=%s down_ok=%s next=%s)" % [row_ok, down_ok, d_next])
 
 	# Leave game: mid-match, the temp top-left button returns to the setup screen.
 	scene.call("_on_leave_pressed")

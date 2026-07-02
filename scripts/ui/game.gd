@@ -453,15 +453,15 @@ func _has_pending(side: int) -> bool:
 func _tile_geometry(m: Vector2, f: Vector2, d: Vector2, connecting: int, exposed: int, is_double: bool) -> Dictionary:
 	var s := tile_theme.half_size
 	if is_double:
-		# Doubles continue straight (they never turn the line). On a horizontal
-		# row they lie crosswise (upright); on a vertical corner segment they
-		# stack IN-LINE instead — a crosswise double there reads as a stray
-		# horizontal tile crammed between the rows.
+		# Doubles lie crosswise to the line and continue straight (they never
+		# turn it) — both halves sit against the matching end. The walk keeps
+		# the NEXT tile going straight too (see _layout_dir), so a wrap never
+		# hugs a crosswise double's long side.
 		if f.x != 0.0:  # horizontal travel -> upright crosswise double
 			var px := m.x if f.x > 0.0 else m.x - s
 			return {"pos": Vector2(px, m.y - s), "size": Vector2(s, 2.0 * s), "a": connecting, "b": connecting, "vertical": true, "new_anchor": Vector2(m.x + s * f.x, m.y), "new_facing": f}
-		var py := m.y if f.y > 0.0 else m.y - 2.0 * s
-		return {"pos": Vector2(m.x - s * 0.5, py), "size": Vector2(s, 2.0 * s), "a": connecting, "b": connecting, "vertical": true, "new_anchor": m + f * (2.0 * s), "new_facing": f}
+		var py := m.y if f.y > 0.0 else m.y - s
+		return {"pos": Vector2(m.x - s, py), "size": Vector2(2.0 * s, s), "a": connecting, "b": connecting, "vertical": false, "new_anchor": Vector2(m.x, m.y + s * f.y), "new_facing": f}
 	# Normal tile: connecting square flush at the edge, body extends along `d`.
 	var connect_c := m + f * (s * 0.5)
 	var far_c := connect_c + d * s
@@ -572,7 +572,13 @@ func _layout_dir(anchor: Dictionary, is_double: bool, turn_dir: Vector2) -> Vect
 			dirs = [f, turn_dir, -turn_dir]  # straight, preferred turn, then fallback
 	else:
 		var h: Vector2 = anchor.get("h_dir", Vector2(1, 0))
-		dirs = [-h, h]  # wrap back the other way, or keep going
+		if not anchor.get("vertical", true):
+			# Off a crosswise double on a vertical segment (the only way a
+			# vertical-facing anchor is a horizontally-drawn tile): continue
+			# straight so the wrap never lies along the double's long side.
+			dirs = [f, -h, h]
+		else:
+			dirs = [-h, h]  # wrap back the other way, or keep going
 	for d in dirs:
 		var geo := _tile_geometry(anchor["pos"], f, d, 0, 0, false)
 		if _in_bounds(geo["pos"], geo["size"], d):
