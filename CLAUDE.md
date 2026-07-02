@@ -69,9 +69,19 @@ UI for now) ✅ 5) rendering/input ✅ 6) main menu (only Play-vs-Bots) 7) setti
   node budget with heuristic fallback).
 - `Bot.rank_moves(r, player)` returns all legal moves best-first with a human
   "why" per move — powers both choose_move and the UI's Coach mode.
+- EXPERT also runs a **sampled 2-ply lookahead** in tightened DRAW rounds
+  (hypothesize void-consistent opponent hands, score their best reply) and
+  **stakes-scaled denial** when the opponent is short-handed. Both are gated to
+  DRAW — measured as pure noise/harmful in BLOCK (sleeping tiles dilute
+  hypotheses; blocked endings punish sacrificed pips). Judge weight changes by
+  tournament, never vibes.
 - Measured (match win rates to 75): Hard>Easy ~92%, Medium>Easy ~93%,
-  Hard>Medium ~56% (block); **Expert>Hard 57% block, 64-67% draw** (solver).
+  Hard>Medium ~56% (block); **Expert>Hard 57% block, 69-72% draw**.
   Assertions live in test_ai.gd.
+- **No tier above Expert** (decided July 2026): dominoes' luck floor compresses
+  top-end gaps — a 5th tier would measure ~55% vs Expert, imperceptible to
+  players. Strength goes INTO Expert (it's also the Coach brain). For a "boss"
+  feel later, use format instead: longer matches (first-to-150) amplify skill.
 
 ## Coach mode (guided play)
 Setup screen toggle ("Coach"). An independent EXPERT bot ranks the player's
